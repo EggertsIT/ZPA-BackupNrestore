@@ -64,6 +64,8 @@ The UI wraps the same `zpa_cloner.py` commands and streams their output into the
 
 The UI can also auto-load an ignored local `.env` file from this directory into the UI process if present; secret values are not displayed.
 
+For a graphical end-to-end process description covering backup, compare, restore from past snapshots, validation, preflight, safeguards, and tenant write boundaries, see [docs/PROCESS.md](docs/PROCESS.md).
+
 Build a macOS app bundle:
 
 ```sh
