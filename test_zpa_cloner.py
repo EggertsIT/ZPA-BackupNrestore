@@ -1,7 +1,18 @@
 import unittest
 
-from zpa_cloner import IDMapper, apply_diff, compute_diff, effective_policy_types, policy_types_for_restore_source, seed_identity_refs
+from zpa_cloner import (
+    IDMapper,
+    apply_diff,
+    compute_diff,
+    diff_action_totals,
+    effective_policy_types,
+    expected_detail_skip,
+    policy_types_for_restore_source,
+    seed_identity_refs,
+    status_label,
+)
 from zpa_integrity import attach_manifest, preflight_restore, validate_backup
+from zpa_policy_tool import CliError
 from zpa_report import render_report
 from zpa_resources import POLICY_TYPES, migration_order_issues
 
@@ -107,6 +118,27 @@ class ZpaClonerTests(unittest.TestCase):
 
     def test_cloner_defaults_to_all_policy_rule_types(self) -> None:
         self.assertEqual(effective_policy_types([]), POLICY_TYPES)
+
+    def test_expected_detail_skip_handles_default_microtenant_not_found(self) -> None:
+        error = CliError("resource.not.found: No resource exists with the given id/name :0")
+
+        self.assertTrue(expected_detail_skip("microtenants", "0", error))
+        self.assertFalse(expected_detail_skip("microtenants", "1", error))
+        self.assertFalse(expected_detail_skip("servers", "0", error))
+
+    def test_diff_action_totals_summarizes_changes(self) -> None:
+        diff = self.minimal_diff()
+        diff["resources"]["servers"]["to_create"] = [{"name": "Server"}]
+        diff["resources"]["server_groups"]["to_update"] = [{"source": {}, "target": {}}]
+        diff["resources"]["application_segments"]["to_delete"] = [{"name": "App"}]
+
+        self.assertEqual(diff_action_totals(diff), {"create": 1, "update": 1, "delete": 1})
+
+    def test_status_label_expands_operator_terms(self) -> None:
+        self.assertEqual(status_label("dry"), "DRY-RUN")
+        self.assertEqual(status_label("ok"), "OK")
+        self.assertEqual(status_label("skip"), "SKIP")
+        self.assertEqual(status_label("error"), "ERROR")
 
     def test_compute_diff_matches_policy_rules_by_policy_type_and_name(self) -> None:
         source = {

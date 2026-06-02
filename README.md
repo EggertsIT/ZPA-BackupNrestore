@@ -64,6 +64,8 @@ The UI wraps the same `zpa_cloner.py` commands and streams their output into the
 
 The UI can also auto-load an ignored local `.env` file from this directory into the UI process if present; secret values are not displayed.
 
+CLI commands default to clean operator logs with run banners, per-resource backup counts, warning summaries, restore safeguards, and final restore totals. Add `--log-level verbose` before the command name when you need lower-level endpoint diagnostics.
+
 For a graphical end-to-end process description covering backup, compare, restore from past snapshots, validation, preflight, safeguards, and tenant write boundaries, see [docs/PROCESS.md](docs/PROCESS.md).
 
 Build a macOS app bundle:

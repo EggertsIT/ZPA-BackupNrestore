@@ -45,6 +45,21 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
     def test_status_from_backup_line(self) -> None:
         self.assertEqual(status_from_line("backup target: policy rules"), "Backing up target: policy rules")
 
+    def test_status_from_restore_progress_lines(self) -> None:
+        self.assertEqual(status_from_line("restore plan: mode=DRY-RUN"), "restore plan: mode=DRY-RUN")
+        self.assertEqual(
+            status_from_line("UPDATE  application_segments   DRY-RUN lab-app-web"),
+            "Dry-run Update application_segments: lab-app-web",
+        )
+        self.assertEqual(
+            status_from_line("UPDATE  application_segments   OK      lab-app-web"),
+            "Update application_segments: lab-app-web (OK)",
+        )
+        self.assertEqual(
+            status_from_line("restore summary: ok=1 dry-run=0 skipped=0 errors=0"),
+            "restore summary: ok=1 dry-run=0 skipped=0 errors=0",
+        )
+
     def test_parse_env_lines_handles_quoted_secret_without_printing_it(self) -> None:
         values = parse_env_lines(
             [

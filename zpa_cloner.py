@@ -13,6 +13,7 @@ from typing import Any
 
 from zpa_integrity import (
     attach_manifest,
+    count_resource,
     diff_has_changes,
     preflight_restore,
     validate_backup,
@@ -37,6 +38,7 @@ from zpa_resources import MIGRATION_ORDER, POLICY_TYPES, RESOURCES, SYSTEM_FIELD
 BACKUPS_DIR = Path("backups")
 APP_DISPLAY_NAME = "ZPA-Backup and Restore"
 DEFAULT_PAGE_SIZE = 500
+LOG_LEVELS = ("normal", "verbose")
 
 
 def now_stamp() -> str:
@@ -81,6 +83,73 @@ def path_for(client: ZscalerClient, template: str, **values: Any) -> str:
     return template.format(**data)
 
 
+def item_count_text(value: Any) -> str:
+    count = count_resource(value)
+    if count is None:
+        return "unavailable"
+    return f"{count} item" if count == 1 else f"{count} items"
+
+
+def print_run_header(command: str, *, mode: str, policy_types: list[str] | None = None) -> None:
+    print(f"run: {command} start")
+    print(f"run: mode={mode}")
+    print(f"run: artifact dir={BACKUPS_DIR}")
+    if policy_types is not None:
+        print(f"run: policy types={', '.join(policy_types)}")
+
+
+def expected_detail_skip(key: str, item_id: Any, error: CliError) -> bool:
+    text = str(error)
+    return key == "microtenants" and str(item_id) == "0" and "resource.not.found" in text
+
+
+def record_warning(warnings: list[str], message: str, *, detail: str, log_level: str) -> None:
+    warnings.append(message)
+    if log_level == "verbose":
+        print(f"warning: {message}: {detail}", file=sys.stderr)
+
+
+def print_warning_summary(scope: str, warnings: list[str]) -> None:
+    if not warnings:
+        print(f"{scope} warnings: 0")
+        return
+    print(f"{scope} warnings: {len(warnings)}")
+    for warning in warnings:
+        print(f"{scope} warning: {warning}")
+
+
+def diff_action_totals(diff: dict[str, Any]) -> dict[str, int]:
+    totals = {"create": 0, "update": 0, "delete": 0}
+    for section in diff.get("resources", {}).values():
+        if not isinstance(section, dict):
+            continue
+        totals["create"] += len(section.get("to_create", []) or [])
+        totals["update"] += len(section.get("to_update", []) or [])
+        totals["delete"] += len(section.get("to_delete", []) or [])
+    return totals
+
+
+def print_restore_header(diff: dict[str, Any], *, dry_run: bool, allow_delete: bool, allow_high_impact: bool) -> None:
+    totals = diff_action_totals(diff)
+    mode = "DRY-RUN" if dry_run else "WRITE"
+    print(f"restore plan: mode={mode}")
+    print(
+        "restore plan: "
+        f"create={totals['create']} update={totals['update']} delete={totals['delete']}"
+    )
+    print(f"restore safeguards: deletes={'enabled' if allow_delete else 'disabled'}")
+    print(f"restore safeguards: high-impact={'enabled' if allow_high_impact else 'disabled'}")
+
+
+def status_label(status: str) -> str:
+    return {
+        "dry": "DRY-RUN",
+        "ok": "OK",
+        "skip": "SKIP",
+        "error": "ERROR",
+    }.get(status, status.upper())
+
+
 def list_all(client: ZscalerClient, path: str, query: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     query = dict(query or {})
     items: list[dict[str, Any]] = []
@@ -102,7 +171,14 @@ def list_all(client: ZscalerClient, path: str, query: dict[str, Any] | None = No
     return items
 
 
-def detail_items(client: ZscalerClient, key: str, meta: dict) -> list[dict[str, Any]]:
+def detail_items(
+    client: ZscalerClient,
+    key: str,
+    meta: dict,
+    *,
+    warnings: list[str],
+    log_level: str,
+) -> list[dict[str, Any]]:
     items = list_all(client, path_for(client, meta["path"]))
     detail_path = meta.get("detail_path")
     if not detail_path:
@@ -117,30 +193,63 @@ def detail_items(client: ZscalerClient, key: str, meta: dict) -> list[dict[str, 
             detail = client.request("GET", path_for(client, detail_path, id=item_id))
             detailed.append(detail if isinstance(detail, dict) else item)
         except CliError as error:
-            print(f"warning: failed to fetch {key} detail {item_id}: {error}", file=sys.stderr)
+            if expected_detail_skip(key, item_id, error):
+                print(f"info: using listed {key} record for default item {item_id}; detail endpoint returned not found")
+                if log_level == "verbose":
+                    print(f"detail: skipped {key} detail {item_id}: {error}", file=sys.stderr)
+            else:
+                record_warning(
+                    warnings,
+                    f"failed to fetch {key} detail {item_id}",
+                    detail=str(error),
+                    log_level=log_level,
+                )
             detailed.append(item)
     return detailed
 
 
-def get_policy_sets(client: ZscalerClient, policy_types: list[str]) -> dict[str, dict[str, Any]]:
+def get_policy_sets(
+    client: ZscalerClient,
+    policy_types: list[str],
+    *,
+    warnings: list[str] | None = None,
+    log_level: str = "normal",
+) -> dict[str, dict[str, Any]]:
     policy_sets: dict[str, dict[str, Any]] = {}
+    warnings = warnings if warnings is not None else []
     for policy_type in policy_types:
         try:
             policy_sets[policy_type] = client.policy_set(policy_type)
         except CliError as error:
-            print(f"warning: failed to fetch policy set {policy_type}: {error}", file=sys.stderr)
+            record_warning(
+                warnings,
+                f"failed to fetch policy set {policy_type}",
+                detail=str(error),
+                log_level=log_level,
+            )
     return policy_sets
 
 
-def get_policy_rules(client: ZscalerClient, policy_types: list[str]) -> list[dict[str, Any]]:
+def get_policy_rules(
+    client: ZscalerClient,
+    policy_types: list[str],
+    *,
+    warnings: list[str],
+    log_level: str,
+) -> list[dict[str, Any]]:
     rules: list[dict[str, Any]] = []
-    policy_sets = get_policy_sets(client, policy_types)
+    policy_sets = get_policy_sets(client, policy_types, warnings=warnings, log_level=log_level)
     for policy_type in policy_types:
         path = f"/mgmtconfig/v1/admin/customers/{client.customer_id}/policySet/rules/policyType/{policy_type}"
         try:
             response = list_all(client, path)
         except CliError as error:
-            print(f"warning: failed to fetch policy rules {policy_type}: {error}", file=sys.stderr)
+            record_warning(
+                warnings,
+                f"failed to fetch policy rules {policy_type}",
+                detail=str(error),
+                log_level=log_level,
+            )
             continue
         policy_set = policy_sets.get(policy_type, {})
         policy_set_id = policy_set.get("id") or policy_set.get("policySetId")
@@ -155,7 +264,7 @@ def get_policy_rules(client: ZscalerClient, policy_types: list[str]) -> list[dic
     return rules
 
 
-def get_identity_refs(client: ZscalerClient) -> dict[str, Any]:
+def get_identity_refs(client: ZscalerClient, *, warnings: list[str], log_level: str) -> dict[str, Any]:
     refs: dict[str, Any] = {"idps": [], "scim_attributes": [], "scim_groups": []}
     idps = client.idps()
     refs["idps"] = idps
@@ -170,7 +279,12 @@ def get_identity_refs(client: ZscalerClient) -> dict[str, Any]:
                 attr["_idpName"] = idp.get("name")
                 refs["scim_attributes"].append(attr)
         except CliError as error:
-            print(f"warning: failed to fetch SCIM attributes for IdP {idp.get('name')}: {error}", file=sys.stderr)
+            record_warning(
+                warnings,
+                f"failed to fetch SCIM attributes for IdP {idp.get('name')}",
+                detail=str(error),
+                log_level=log_level,
+            )
         try:
             path = f"/userconfig/v1/customers/{client.customer_id}/scimgroup/idpId/{idp_id}"
             for group in list_all(client, path):
@@ -179,11 +293,24 @@ def get_identity_refs(client: ZscalerClient) -> dict[str, Any]:
                 group["_idpName"] = idp.get("name")
                 refs["scim_groups"].append(group)
         except CliError as error:
-            print(f"warning: failed to fetch SCIM groups for IdP {idp.get('name')}: {error}", file=sys.stderr)
+            record_warning(
+                warnings,
+                f"failed to fetch SCIM groups for IdP {idp.get('name')}",
+                detail=str(error),
+                log_level=log_level,
+            )
     return refs
 
 
-def backup_tenant(client: ZscalerClient, label: str, out_path: Path, policy_types: list[str]) -> dict[str, Any]:
+def backup_tenant(
+    client: ZscalerClient,
+    label: str,
+    out_path: Path,
+    policy_types: list[str],
+    *,
+    log_level: str = "normal",
+) -> dict[str, Any]:
+    warnings: list[str] = []
     backup = {
         "meta": {
             "label": label,
@@ -193,24 +320,47 @@ def backup_tenant(client: ZscalerClient, label: str, out_path: Path, policy_type
         },
         "resources": {},
         "errors": {},
+        "warnings": warnings,
     }
+    print_run_header("backup", mode=label, policy_types=policy_types)
     for key, meta in RESOURCES.items():
         try:
-            print(f"backup {label}: {key}")
-            backup["resources"][key] = detail_items(client, key, meta)
+            print(f"backup {label}: {key} start")
+            backup["resources"][key] = detail_items(
+                client,
+                key,
+                meta,
+                warnings=warnings,
+                log_level=log_level,
+            )
+            print(f"backup {label}: {key} done ({item_count_text(backup['resources'][key])})")
         except CliError as error:
             backup["resources"][key] = None
             backup["errors"][key] = str(error)
+            record_warning(warnings, f"failed to back up {key}", detail=str(error), log_level=log_level)
     try:
-        print(f"backup {label}: identity references")
-        backup["resources"].update(get_identity_refs(client))
+        print(f"backup {label}: identity references start")
+        backup["resources"].update(get_identity_refs(client, warnings=warnings, log_level=log_level))
+        ref_counts = ", ".join(
+            f"{key}={item_count_text(backup['resources'].get(key))}"
+            for key in ("idps", "scim_attributes", "scim_groups")
+        )
+        print(f"backup {label}: identity references done ({ref_counts})")
     except CliError as error:
         backup["errors"]["identity_refs"] = str(error)
-    print(f"backup {label}: policy rules")
-    backup["resources"]["policy_sets"] = get_policy_sets(client, policy_types)
-    backup["resources"]["policy_rules"] = get_policy_rules(client, policy_types)
+        record_warning(warnings, "failed to back up identity references", detail=str(error), log_level=log_level)
+    print(f"backup {label}: policy rules start")
+    backup["resources"]["policy_sets"] = get_policy_sets(client, policy_types, warnings=warnings, log_level=log_level)
+    backup["resources"]["policy_rules"] = get_policy_rules(client, policy_types, warnings=warnings, log_level=log_level)
+    print(
+        f"backup {label}: policy rules done "
+        f"(policy_sets={item_count_text(backup['resources']['policy_sets'])}, "
+        f"rules={item_count_text(backup['resources']['policy_rules'])})"
+    )
+    print_warning_summary(f"backup {label}", warnings)
     attach_manifest(backup)
     save_json(out_path, backup)
+    print(f"backup {label}: complete ({item_count_text(backup['resources'])}; warnings={len(warnings)})")
     return backup
 
 
@@ -472,7 +622,7 @@ def apply_diff(
             result["errors"] += 1
         else:
             result["skipped"] += 1
-        print(f"{action:<7} {key:<22} {status:<5} {name} {detail}".rstrip())
+        print(f"{action:<7} {key:<22} {status_label(status):<7} {name} {detail}".rstrip())
 
     for key in MIGRATION_ORDER:
         section = diff["resources"][key]
@@ -559,6 +709,11 @@ def apply_diff(
                     record("DELETE", key, name, "ok")
             except CliError as error:
                 record("DELETE", key, name, "error", str(error))
+    print(
+        "restore summary: "
+        f"ok={result['ok']} dry-run={result['dry']} "
+        f"skipped={result['skipped']} errors={result['errors']}"
+    )
     return result
 
 
@@ -587,10 +742,10 @@ def effective_policy_types(policy_types: list[str]) -> list[str]:
 def command_backup(args: argparse.Namespace) -> None:
     source_path, target_path, _ = backup_paths()
     if args.tenant in ("source", "both"):
-        backup_tenant(profile_client("source", args), "source", source_path, args.policy_type)
+        backup_tenant(profile_client("source", args), "source", source_path, args.policy_type, log_level=args.log_level)
         print(f"source backup: {source_path}")
     if args.tenant in ("target", "both"):
-        backup_tenant(profile_client("target", args), "target", target_path, args.policy_type)
+        backup_tenant(profile_client("target", args), "target", target_path, args.policy_type, log_level=args.log_level)
         print(f"target backup: {target_path}")
 
 
@@ -623,8 +778,9 @@ def command_diff(args: argparse.Namespace) -> None:
 def command_plan(args: argparse.Namespace) -> None:
     source_path, target_path, diff_path = backup_paths()
     report_path = diff_path.with_suffix(".html")
-    source = backup_tenant(profile_client("source", args), "source", source_path, args.policy_type)
-    target = backup_tenant(profile_client("target", args), "target", target_path, args.policy_type)
+    print_run_header("plan", mode="read-only", policy_types=args.policy_type)
+    source = backup_tenant(profile_client("source", args), "source", source_path, args.policy_type, log_level=args.log_level)
+    target = backup_tenant(profile_client("target", args), "target", target_path, args.policy_type, log_level=args.log_level)
     diff = compute_diff(source, target)
     save_json(diff_path, diff)
     write_report(
@@ -655,7 +811,8 @@ def command_restore_plan(args: argparse.Namespace) -> None:
     report_path = diff_path.with_suffix(".html")
     policy_types = policy_types_for_restore_source(source, args.policy_type)
 
-    target = backup_tenant(profile_client("target", args), "target", target_path, policy_types)
+    print_run_header("restore-plan", mode="read-only", policy_types=policy_types)
+    target = backup_tenant(profile_client("target", args), "target", target_path, policy_types, log_level=args.log_level)
     diff = compute_diff(source, target)
     save_json(diff_path, diff)
     write_report(
@@ -689,6 +846,16 @@ def command_apply(args: argparse.Namespace) -> None:
     if not diff_has_changes(diff):
         print("No changes in diff. Nothing to apply.")
         return
+    print_run_header(
+        getattr(args, "command", "apply"),
+        mode="dry-run" if args.dry_run else "write",
+    )
+    print_restore_header(
+        diff,
+        dry_run=args.dry_run,
+        allow_delete=args.allow_delete,
+        allow_high_impact=args.allow_high_impact,
+    )
     result = apply_diff(
         profile_client("target", args),
         diff,
@@ -813,6 +980,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zidentity-base-url", default=env("ZSCALER_ZIDENTITY_BASE_URL"))
     parser.add_argument("--audience", default="https://api.zscaler.com")
     parser.add_argument("--microtenant-id")
+    parser.add_argument(
+        "--log-level",
+        choices=LOG_LEVELS,
+        default="normal",
+        help="Logging detail. Default: normal.",
+    )
     parser.add_argument(
         "--policy-type",
         action="append",

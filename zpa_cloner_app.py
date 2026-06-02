@@ -184,10 +184,20 @@ def extract_artifact(line: str) -> tuple[str, str] | None:
 def status_from_line(line: str) -> str | None:
     stripped = line.strip()
     lowered = stripped.lower()
+    if lowered.startswith("run:"):
+        return stripped[4:].strip().capitalize()
     if lowered.startswith("backup source:"):
         return f"Backing up source: {stripped.split(':', 1)[1].strip()}"
     if lowered.startswith("backup target:"):
         return f"Backing up target: {stripped.split(':', 1)[1].strip()}"
+    if lowered.startswith("backup ") and " warnings:" in lowered:
+        return stripped
+    if lowered.startswith("restore plan:"):
+        return stripped
+    if lowered.startswith("restore safeguards:"):
+        return stripped
+    if lowered.startswith("restore summary:"):
+        return stripped
     if lowered.startswith("resource"):
         return "Building summary"
     if "preflight passed" in lowered:
@@ -196,6 +206,10 @@ def status_from_line(line: str) -> str | None:
         return "Preflight failed"
     if lowered.startswith(("create", "update", "delete")):
         parts = stripped.split()
+        if len(parts) >= 4 and parts[2] == "DRY-RUN":
+            return f"Dry-run {parts[0].title()} {parts[1]}: {parts[3]}"
+        if len(parts) >= 4:
+            return f"{parts[0].title()} {parts[1]}: {parts[3]} ({parts[2]})"
         if len(parts) >= 3:
             return f"{parts[0].title()} {parts[1]}: {parts[2]}"
     artifact = extract_artifact(stripped)
