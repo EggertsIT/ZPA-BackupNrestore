@@ -74,6 +74,8 @@ python3 build_macos_app.py
 
 This writes `dist/ZPA-Backup and Restore.app`. When launched as an app, runtime files such as `.env`, backups, diffs, restore results, and reports are read and written under `~/Documents/ZPA-Backup and Restore`. Credentials entered in the UI are kept in memory for that app session unless you separately place them in `.env`.
 
+On Apple Silicon Macs, the app launcher skips Intel-only Python binaries so it does not trigger Rosetta just because an old `/usr/local/bin/python3` exists. Install a native arm64 Python 3 with Tkinter, for example through Homebrew in `/opt/homebrew` or the official python.org universal installer.
+
 Back up both tenants and produce a diff without changing anything:
 
 ```sh

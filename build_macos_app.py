@@ -76,10 +76,30 @@ def write_launcher() -> None:
 APP_CONTENTS="$(cd "$(dirname "$0")/.." && pwd)"
 RESOURCES="$APP_CONTENTS/Resources"
 export PYTHONPATH="$RESOURCES${PYTHONPATH:+:$PYTHONPATH}"
+HOST_ARCH="$(uname -m 2>/dev/null || true)"
 
-for candidate in "${ZPA_BACKUP_RESTORE_PYTHON:-}" "${ZPA_CLONER_PYTHON:-}" /opt/homebrew/bin/python3 /usr/local/bin/python3 /opt/homebrew/opt/python@3.14/bin/python3.14 /usr/bin/python3
+python_arch_ok() {
+  candidate="$1"
+  if [ "$HOST_ARCH" = "arm64" ]; then
+    info="$(file -L "$candidate" 2>/dev/null || true)"
+    case "$info" in
+      *"Mach-O"*)
+        case "$info" in
+          *"arm64"*) return 0 ;;
+          *) return 1 ;;
+        esac
+        ;;
+    esac
+  fi
+  return 0
+}
+
+for candidate in "${ZPA_BACKUP_RESTORE_PYTHON:-}" "${ZPA_CLONER_PYTHON:-}" /opt/homebrew/bin/python3 /opt/homebrew/opt/python@3.14/bin/python3.14 /opt/homebrew/opt/python@3.13/bin/python3.13 /opt/homebrew/opt/python@3.12/bin/python3.12 /Library/Frameworks/Python.framework/Versions/Current/bin/python3 /usr/bin/python3 /usr/local/bin/python3
 do
   if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+    if ! python_arch_ok "$candidate"; then
+      continue
+    fi
     "$candidate" -c "import tkinter" >/dev/null 2>&1
     if [ $? -eq 0 ]; then
       exec "$candidate" "$RESOURCES/zpa_cloner_app.py" "$@"
@@ -87,7 +107,7 @@ do
   fi
 done
 
-osascript -e 'display dialog "ZPA-Backup and Restore needs Python 3 with Tkinter. Install Python 3 from Homebrew or python.org, then reopen the app." buttons {"OK"} default button "OK" with icon caution'
+osascript -e 'display dialog "ZPA-Backup and Restore needs Python 3 with Tkinter. On Apple Silicon, install a native arm64 Python 3 from Homebrew or python.org, then reopen the app." buttons {"OK"} default button "OK" with icon caution'
 exit 1
 """
     launcher_path = MACOS_DIR / EXECUTABLE_NAME
