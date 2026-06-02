@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+backups/
+__pycache__/
+*.pyc
+dist/
+.DS_Store
+OneAPI_postman_collection_*.json
