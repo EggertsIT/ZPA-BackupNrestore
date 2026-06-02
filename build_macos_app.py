@@ -83,15 +83,21 @@ python_arch_ok() {
   if [ "$HOST_ARCH" = "arm64" ]; then
     info="$(file -L "$candidate" 2>/dev/null || true)"
     case "$info" in
-      *"Mach-O"*)
-        case "$info" in
-          *"arm64"*) return 0 ;;
-          *) return 1 ;;
-        esac
-        ;;
+      *"Mach-O"*"arm64"*) return 0 ;;
+      *) return 1 ;;
     esac
   fi
   return 0
+}
+
+python_run() {
+  candidate="$1"
+  shift
+  if [ "$HOST_ARCH" = "arm64" ]; then
+    /usr/bin/arch -arm64 "$candidate" "$@"
+  else
+    "$candidate" "$@"
+  fi
 }
 
 for candidate in "${ZPA_BACKUP_RESTORE_PYTHON:-}" "${ZPA_CLONER_PYTHON:-}" /opt/homebrew/bin/python3 /opt/homebrew/opt/python@3.14/bin/python3.14 /opt/homebrew/opt/python@3.13/bin/python3.13 /opt/homebrew/opt/python@3.12/bin/python3.12 /Library/Frameworks/Python.framework/Versions/Current/bin/python3 /usr/bin/python3 /usr/local/bin/python3
@@ -100,8 +106,11 @@ do
     if ! python_arch_ok "$candidate"; then
       continue
     fi
-    "$candidate" -c "import tkinter" >/dev/null 2>&1
+    python_run "$candidate" -c "import tkinter" >/dev/null 2>&1
     if [ $? -eq 0 ]; then
+      if [ "$HOST_ARCH" = "arm64" ]; then
+        exec /usr/bin/arch -arm64 "$candidate" "$RESOURCES/zpa_cloner_app.py" "$@"
+      fi
       exec "$candidate" "$RESOURCES/zpa_cloner_app.py" "$@"
     fi
   fi
