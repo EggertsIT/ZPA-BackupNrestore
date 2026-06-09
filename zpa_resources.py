@@ -39,6 +39,7 @@ def resource(
     path: str,
     *,
     detail_path: str | None = None,
+    detail_strategy: str = "detail",
     id_field: str = "id",
     name_field: str = "name",
     writable: bool = True,
@@ -50,6 +51,7 @@ def resource(
     return {
         "path": path,
         "detail_path": detail_path,
+        "detail_strategy": detail_strategy,
         "id_field": id_field,
         "name_field": name_field,
         "writable": writable,
@@ -116,7 +118,9 @@ RESOURCES: dict[str, dict] = {
     "application_segments": resource(
         "/mgmtconfig/v1/admin/customers/{customer_id}/application",
         detail_path="/mgmtconfig/v1/admin/customers/{customer_id}/application/{id}",
+        detail_strategy="list",
         depends_on=["segment_groups", "server_groups", "service_edge_groups", "inspection_profiles", "cbi_profiles"],
+        notes="The application list endpoint returns detailed records and is used directly to avoid per-segment reads.",
     ),
     "lss_configs": resource(
         "/mgmtconfig/v2/admin/customers/{customer_id}/lssConfig",

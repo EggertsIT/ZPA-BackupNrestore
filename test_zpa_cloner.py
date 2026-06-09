@@ -4,6 +4,7 @@ from zpa_cloner import (
     IDMapper,
     apply_diff,
     compute_diff,
+    detail_items,
     diff_action_totals,
     effective_policy_types,
     expected_detail_skip,
@@ -14,7 +15,7 @@ from zpa_cloner import (
 from zpa_integrity import attach_manifest, preflight_restore, validate_backup
 from zpa_policy_tool import CliError
 from zpa_report import render_report
-from zpa_resources import POLICY_TYPES, migration_order_issues
+from zpa_resources import POLICY_TYPES, RESOURCES, migration_order_issues
 
 
 class ZpaClonerTests(unittest.TestCase):
@@ -139,6 +140,79 @@ class ZpaClonerTests(unittest.TestCase):
         self.assertEqual(status_label("ok"), "OK")
         self.assertEqual(status_label("skip"), "SKIP")
         self.assertEqual(status_label("error"), "ERROR")
+
+    def test_application_segments_use_list_response_without_detail_reads(self) -> None:
+        class RecordingClient:
+            customer_id = "123"
+
+            def __init__(self) -> None:
+                self.calls = []
+
+            def request(self, method, path, query=None, body=None):
+                self.calls.append((method, path, query))
+                if path == "/mgmtconfig/v1/admin/customers/123/application":
+                    return {
+                        "totalPages": "1",
+                        "list": [
+                            {
+                                "id": "app-1",
+                                "name": "CRM",
+                                "domainNames": ["crm.example.com"],
+                                "serverGroups": [{"id": "server-group-1", "name": "CRM Servers"}],
+                            }
+                        ],
+                    }
+                raise AssertionError(f"unexpected call: {method} {path}")
+
+        client = RecordingClient()
+
+        items = detail_items(
+            client,
+            "application_segments",
+            RESOURCES["application_segments"],
+            warnings=[],
+            log_level="normal",
+        )
+
+        self.assertEqual(items[0]["name"], "CRM")
+        self.assertEqual(
+            [path for _method, path, _query in client.calls],
+            ["/mgmtconfig/v1/admin/customers/123/application"],
+        )
+
+    def test_detail_backed_resources_still_fetch_item_details(self) -> None:
+        class RecordingClient:
+            customer_id = "123"
+
+            def __init__(self) -> None:
+                self.calls = []
+
+            def request(self, method, path, query=None, body=None):
+                self.calls.append((method, path, query))
+                if path == "/mgmtconfig/v1/admin/customers/123/server":
+                    return {"totalPages": "1", "list": [{"id": "server-1", "name": "Listed Server"}]}
+                if path == "/mgmtconfig/v1/admin/customers/123/server/server-1":
+                    return {"id": "server-1", "name": "Detailed Server", "address": "10.0.0.5"}
+                raise AssertionError(f"unexpected call: {method} {path}")
+
+        client = RecordingClient()
+
+        items = detail_items(
+            client,
+            "servers",
+            RESOURCES["servers"],
+            warnings=[],
+            log_level="normal",
+        )
+
+        self.assertEqual(items[0]["name"], "Detailed Server")
+        self.assertEqual(
+            [path for _method, path, _query in client.calls],
+            [
+                "/mgmtconfig/v1/admin/customers/123/server",
+                "/mgmtconfig/v1/admin/customers/123/server/server-1",
+            ],
+        )
 
     def test_compute_diff_matches_policy_rules_by_policy_type_and_name(self) -> None:
         source = {

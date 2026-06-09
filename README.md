@@ -66,6 +66,10 @@ The UI can also auto-load an ignored local `.env` file from this directory into 
 
 CLI commands default to clean operator logs with run banners, per-resource backup counts, warning summaries, restore safeguards, and final restore totals. Add `--log-level verbose` before the command name when you need lower-level endpoint diagnostics.
 
+Each backup/restore workflow also writes an ignored HTTP audit log under `logs/<timestamp>-<command>.log` and prints `api:` progress lines while requests are in flight. The audit log is JSON lines and records request start, response status, duration, selected request IDs/correlation headers, response byte counts, and response record counts. It does not write bearer tokens, authorization headers, request bodies, client secrets, or raw successful response payloads. Use `--audit-log <path>` to choose the file and `--no-api-progress` to keep the screen output quieter while still writing the audit file.
+
+Application Segment backup uses the paginated `GET /application` response directly because that endpoint returns detailed application segment records. This avoids one extra `GET /application/{id}` call per application segment while still using `pagesize=500` pagination for larger tenants.
+
 For a graphical end-to-end process description covering backup, compare, restore from past snapshots, validation, preflight, safeguards, and tenant write boundaries, see [docs/PROCESS.md](docs/PROCESS.md).
 
 Build a macOS app bundle:

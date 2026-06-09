@@ -38,12 +38,19 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
         )
 
     def test_extract_artifacts_from_cli_output(self) -> None:
+        self.assertEqual(extract_artifact("audit log: logs/run.log"), ("audit_log", "logs/run.log"))
         self.assertEqual(extract_artifact("source backup: backups/run-source.json"), ("source_backup", "backups/run-source.json"))
         self.assertEqual(extract_artifact("report written: backups/run.html"), ("report", "backups/run.html"))
         self.assertEqual(extract_artifact("restore result: backups/result.json"), ("apply_result", "backups/result.json"))
 
     def test_status_from_backup_line(self) -> None:
         self.assertEqual(status_from_line("backup target: policy rules"), "Backing up target: policy rules")
+
+    def test_status_from_api_progress_line(self) -> None:
+        self.assertEqual(
+            status_from_line("api: GET /mgmtconfig/v1/admin/customers/123/application?page=1&pagesize=500 start"),
+            "GET /mgmtconfig/v1/admin/customers/123/application?page=1&pagesize=500 start",
+        )
 
     def test_status_from_restore_progress_lines(self) -> None:
         self.assertEqual(status_from_line("restore plan: mode=DRY-RUN"), "restore plan: mode=DRY-RUN")

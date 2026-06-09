@@ -74,6 +74,7 @@ CREDENTIAL_FIELDS = (
 )
 
 ARTIFACT_LABELS = {
+    "audit log": "audit_log",
     "source backup": "source_backup",
     "target backup": "target_backup",
     "diff": "diff",
@@ -186,6 +187,8 @@ def status_from_line(line: str) -> str | None:
     lowered = stripped.lower()
     if lowered.startswith("run:"):
         return stripped[4:].strip().capitalize()
+    if lowered.startswith("api:"):
+        return stripped[4:].strip()
     if lowered.startswith("backup source:"):
         return f"Backing up source: {stripped.split(':', 1)[1].strip()}"
     if lowered.startswith("backup target:"):
@@ -239,6 +242,7 @@ class ZPAClonerApp:
         self.diff_var = tk.StringVar()
         self.report_var = tk.StringVar()
         self.apply_result_var = tk.StringVar()
+        self.audit_log_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Idle")
         self.detail_var = tk.StringVar(value="Ready")
         self.strict_manifest_var = tk.BooleanVar(value=True)
@@ -400,6 +404,7 @@ class ZPAClonerApp:
         self._path_row(frame, "Restore diff", self.diff_var, "json")
         self._path_row(frame, "Report", self.report_var, "html")
         self._path_row(frame, "Restore result", self.apply_result_var, "json")
+        self._path_row(frame, "Audit log", self.audit_log_var, "log")
 
     def _build_safeguard_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Restore Safeguards", padding=10)
@@ -456,6 +461,7 @@ class ZPAClonerApp:
         ttk.Label(top, textvariable=self.detail_var, style="Panel.TLabel").pack(side="left", fill="x", expand=True)
         self.stop_button = ttk.Button(top, text="Stop", command=self.stop_command, state="disabled")
         self.stop_button.pack(side="right", padx=(8, 0))
+        ttk.Button(top, text="Open Log", command=self.open_audit_log).pack(side="right", padx=(8, 0))
         ttk.Button(top, text="Open Report", command=self.open_report).pack(side="right")
 
         self.progress = ttk.Progressbar(frame, mode="indeterminate")
@@ -896,11 +902,21 @@ class ZPAClonerApp:
         if not report:
             self._show_error("No report file is selected.")
             return
-        path = Path(report)
+        self._open_existing_path(report, "Report")
+
+    def open_audit_log(self) -> None:
+        audit_log = self.audit_log_var.get().strip()
+        if not audit_log:
+            self._show_error("No audit log file is selected.")
+            return
+        self._open_existing_path(audit_log, "Audit log")
+
+    def _open_existing_path(self, value: str, label: str) -> None:
+        path = Path(value)
         if not path.is_absolute():
             path = WORK_DIR / path
         if not path.exists():
-            self._show_error(f"Report file does not exist: {path}")
+            self._show_error(f"{label} file does not exist: {path}")
             return
         webbrowser.open(path.resolve().as_uri())
 
@@ -914,6 +930,7 @@ class ZPAClonerApp:
             "diff": self.diff_var,
             "report": self.report_var,
             "apply_result": self.apply_result_var,
+            "audit_log": self.audit_log_var,
         }.get(key)
         if target is not None:
             target.set(str(path))
@@ -946,6 +963,8 @@ class ZPAClonerApp:
     def _filetypes(self, kind: str) -> list[tuple[str, str]]:
         if kind == "html":
             return [("HTML files", "*.html"), ("All files", "*.*")]
+        if kind == "log":
+            return [("Log files", "*.log"), ("All files", "*.*")]
         return [("JSON files", "*.json"), ("All files", "*.*")]
 
     def _default_report_path(self) -> str:

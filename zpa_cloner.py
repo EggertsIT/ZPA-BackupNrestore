@@ -20,6 +20,7 @@ from zpa_integrity import (
     validate_diff,
 )
 from zpa_policy_tool import (
+    ApiAuditLogger,
     CliError,
     DEFAULT_LEGACY_ZPA_BASE_URL,
     DEFAULT_ONEAPI_BASE_URL,
@@ -36,6 +37,7 @@ from zpa_resources import MIGRATION_ORDER, POLICY_TYPES, RESOURCES, SYSTEM_FIELD
 
 
 BACKUPS_DIR = Path("backups")
+LOGS_DIR = Path("logs")
 APP_DISPLAY_NAME = "ZPA-Backup and Restore"
 DEFAULT_PAGE_SIZE = 500
 LOG_LEVELS = ("normal", "verbose")
@@ -61,6 +63,7 @@ def profile_client(profile: str, args: argparse.Namespace) -> ZscalerClient:
         legacy_zpa_base_url=legacy_zpa,
         audience=args.audience,
         microtenant_id=env(f"{prefix}MICROTENANT_ID", args.microtenant_id),
+        audit_logger=getattr(args, "audit_logger", None),
     )
 
 
@@ -96,6 +99,24 @@ def print_run_header(command: str, *, mode: str, policy_types: list[str] | None 
     print(f"run: artifact dir={BACKUPS_DIR}")
     if policy_types is not None:
         print(f"run: policy types={', '.join(policy_types)}")
+
+
+def default_audit_log_path(command: str) -> Path:
+    return LOGS_DIR / f"{now_stamp()}-{command}.log"
+
+
+def configure_audit(args: argparse.Namespace) -> None:
+    audit_path = Path(args.audit_log) if args.audit_log else default_audit_log_path(args.command)
+    args.audit_log_path = audit_path
+    args.audit_logger = ApiAuditLogger(audit_path, progress=not args.no_api_progress)
+    args.audit_logger.log_event(
+        "run.start",
+        command=args.command,
+        auth_mode=args.auth_mode,
+        log_level=args.log_level,
+        policy_types=args.policy_type,
+    )
+    print(f"audit log: {audit_path}")
 
 
 def expected_detail_skip(key: str, item_id: Any, error: CliError) -> bool:
@@ -182,6 +203,11 @@ def detail_items(
     items = list_all(client, path_for(client, meta["path"]))
     detail_path = meta.get("detail_path")
     if not detail_path:
+        return items
+    detail_strategy = meta.get("detail_strategy", "detail")
+    if detail_strategy == "list":
+        if log_level == "verbose":
+            print(f"detail: using listed {key} records; per-item detail fetch disabled by resource catalog")
         return items
     detailed = []
     for item in items:
@@ -987,6 +1013,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Logging detail. Default: normal.",
     )
     parser.add_argument(
+        "--audit-log",
+        default=env("ZPA_AUDIT_LOG"),
+        help="HTTP audit log path. Default: logs/<timestamp>-<command>.log.",
+    )
+    parser.add_argument(
+        "--no-api-progress",
+        action="store_true",
+        help="Do not print per-request API progress lines to stdout. The audit log is still written.",
+    )
+    parser.add_argument(
         "--policy-type",
         action="append",
         default=[],
@@ -1078,10 +1114,18 @@ def main(argv: list[str] | None = None) -> int:
     invalid = sorted(set(args.policy_type) - set(POLICY_TYPES))
     if invalid:
         parser.error(f"unsupported policy type(s): {', '.join(invalid)}")
+    configure_audit(args)
     try:
         args.func(args)
+        args.audit_logger.log_event("run.finish", command=args.command, exit_code=0)
         return 0
     except CliError as error:
+        args.audit_logger.log_event(
+            "run.finish",
+            command=args.command,
+            exit_code=1,
+            error=str(error),
+        )
         print(f"Error: {error}", file=sys.stderr)
         return 1
 

@@ -1,7 +1,18 @@
 import copy
+import contextlib
+import io
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from zpa_policy_tool import DEFAULT_LEGACY_ZPA_BASE_URL, DEFAULT_ONEAPI_BASE_URL, ZscalerClient, add_scim_condition
+from zpa_policy_tool import (
+    ApiAuditLogger,
+    DEFAULT_LEGACY_ZPA_BASE_URL,
+    DEFAULT_ONEAPI_BASE_URL,
+    ZscalerClient,
+    add_scim_condition,
+)
 
 
 class AddScimConditionTests(unittest.TestCase):
@@ -25,6 +36,47 @@ class AddScimConditionTests(unittest.TestCase):
         )
 
         self.assertEqual(client.zpa_base_url, f"{DEFAULT_ONEAPI_BASE_URL}/zpa")
+
+    def test_audit_logger_records_progress_and_redacts_sensitive_query_values(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "audit.log"
+            logger = ApiAuditLogger(path, progress=True)
+            stdout = io.StringIO()
+
+            with contextlib.redirect_stdout(stdout):
+                request_id, started_at, display = logger.begin(
+                    "GET",
+                    "https://example.test/mgmtconfig/v1/admin/customers/123/application",
+                    path="/mgmtconfig/v1/admin/customers/123/application",
+                    query={"page": 1, "pagesize": 500, "client_secret": "do-not-log", "clientSecret": "also-redact"},
+                )
+                logger.finish(
+                    request_id,
+                    display,
+                    started_at,
+                    status=200,
+                    headers={"x-request-id": "request-1"},
+                    body={"totalPages": "1", "list": [{"id": "app-1", "name": "CRM"}]},
+                    body_bytes=128,
+                )
+
+            output = stdout.getvalue()
+            self.assertIn("api: GET /mgmtconfig/v1/admin/customers/123/application", output)
+            self.assertNotIn("do-not-log", output)
+            self.assertNotIn("also-redact", output)
+
+            raw_log = path.read_text(encoding="utf-8")
+            self.assertNotIn("do-not-log", raw_log)
+            self.assertNotIn("also-redact", raw_log)
+            records = [json.loads(line) for line in raw_log.splitlines()]
+
+        self.assertEqual(records[0]["event"], "http.request.start")
+        self.assertEqual(records[0]["query"]["client_secret"], "[REDACTED]")
+        self.assertEqual(records[0]["query"]["clientSecret"], "[REDACTED]")
+        self.assertEqual(records[1]["event"], "http.request.finish")
+        self.assertEqual(records[1]["status"], 200)
+        self.assertEqual(records[1]["response"]["record_count"], 1)
+        self.assertEqual(records[1]["response_headers"]["x-request-id"], "request-1")
 
     def test_adds_scim_attribute_condition_to_scim_group_rule(self) -> None:
         rule = {

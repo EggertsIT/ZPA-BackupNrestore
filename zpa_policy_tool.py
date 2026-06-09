@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import copy
 import difflib
+import itertools
 import json
 import os
+import re
 import sys
 import time
 import urllib.error
@@ -22,6 +24,30 @@ DEFAULT_LEGACY_ZPA_BASE_URL = "https://config.private.zscaler.com"
 DEFAULT_AUDIENCE = "https://api.zscaler.com"
 DEFAULT_POLICY_TYPE = "ACCESS_POLICY"
 AUTH_MODES = ("legacy", "oneapi")
+REQUEST_ID_HEADERS = (
+    "x-request-id",
+    "x-correlation-id",
+    "x-zscaler-request-id",
+    "x-zs-request-id",
+    "traceparent",
+    "date",
+)
+SENSITIVE_QUERY_KEYS = {
+    "access_token",
+    "api_key",
+    "apikey",
+    "authorization",
+    "client_id",
+    "client_secret",
+    "password",
+    "refresh_token",
+    "secret",
+    "token",
+}
+SENSITIVE_TEXT_RE = re.compile(
+    r'("?(?:access_token|authorization|client_id|client_secret|password|refresh_token|secret|token)"?\s*[:=]\s*)("[^"]*"|[^,\s}]+)',
+    re.IGNORECASE,
+)
 
 
 class CliError(Exception):
@@ -35,6 +61,112 @@ class ApiError(CliError):
         self.status = status
         self.body = body
         super().__init__(f"{method} {url} failed with HTTP {status}: {body}")
+
+
+class ApiAuditLogger:
+    """Small JSONL audit logger for HTTP calls.
+
+    It deliberately avoids request bodies, authorization headers, and bearer
+    tokens. The stdout progress lines are meant for operators; the file records
+    the durable request/response timeline.
+    """
+
+    _counter = itertools.count(1)
+
+    def __init__(self, path: Path | None = None, *, progress: bool = False) -> None:
+        self.path = path
+        self.progress = progress
+        if self.path:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+
+    def log_event(self, event: str, **fields: Any) -> None:
+        if not self.path:
+            return
+        record = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "event": event,
+            **fields,
+        }
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+
+    def begin(
+        self,
+        method: str,
+        url: str,
+        *,
+        path: str | None = None,
+        query: dict[str, Any] | None = None,
+        body_bytes: int = 0,
+    ) -> tuple[str, float, str]:
+        request_id = f"req-{next(self._counter)}"
+        split = urllib.parse.urlsplit(url)
+        request_path = path or split.path or url
+        clean_query = sanitize_query(query or urllib.parse.parse_qs(split.query))
+        display = format_request_display(method, request_path, clean_query)
+        if self.progress:
+            print(f"api: {display} start", flush=True)
+        self.log_event(
+            "http.request.start",
+            request_id=request_id,
+            method=method,
+            scheme=split.scheme,
+            host=split.netloc,
+            path=request_path,
+            query=clean_query,
+            body_bytes=body_bytes,
+        )
+        return request_id, time.monotonic(), display
+
+    def finish(
+        self,
+        request_id: str,
+        display: str,
+        started_at: float,
+        *,
+        status: int,
+        headers: Any,
+        body: Any,
+        body_bytes: int,
+    ) -> None:
+        duration_ms = elapsed_ms(started_at)
+        if self.progress:
+            print(f"api: {display} HTTP {status} ({duration_ms} ms)", flush=True)
+        self.log_event(
+            "http.request.finish",
+            request_id=request_id,
+            status=status,
+            duration_ms=duration_ms,
+            response_headers=selected_headers(headers),
+            response_bytes=body_bytes,
+            response=response_summary(body),
+        )
+
+    def fail(
+        self,
+        request_id: str,
+        display: str,
+        started_at: float,
+        *,
+        status: int | None = None,
+        headers: Any = None,
+        error: str,
+        error_body: str | None = None,
+    ) -> None:
+        duration_ms = elapsed_ms(started_at)
+        status_text = f"HTTP {status}" if status is not None else "ERROR"
+        if self.progress:
+            print(f"api: {display} {status_text} ({duration_ms} ms)", flush=True)
+        self.log_event(
+            "http.request.error",
+            request_id=request_id,
+            status=status,
+            duration_ms=duration_ms,
+            response_headers=selected_headers(headers),
+            error=redact_text(error),
+            error_body_preview=redact_text(error_body[:2000]) if error_body else None,
+            error_body_bytes=len(error_body.encode("utf-8")) if error_body else 0,
+        )
 
 
 def env(name: str, default: str | None = None) -> str | None:
@@ -110,6 +242,83 @@ def records_from(response: Any) -> list[Any]:
     return []
 
 
+def elapsed_ms(started_at: float) -> int:
+    return int((time.monotonic() - started_at) * 1000)
+
+
+def is_sensitive_key(key: Any) -> bool:
+    normalized = str(key).replace("-", "_").casefold()
+    compact = re.sub(r"[^a-z0-9]", "", str(key).casefold())
+    sensitive_compact_keys = {
+        "accesstoken",
+        "apikey",
+        "authorization",
+        "clientid",
+        "clientsecret",
+        "password",
+        "refreshtoken",
+        "secret",
+        "token",
+    }
+    return (
+        normalized in SENSITIVE_QUERY_KEYS
+        or normalized.endswith("_secret")
+        or normalized.endswith("_token")
+        or compact in sensitive_compact_keys
+    )
+
+
+def sanitize_query(query: dict[str, Any]) -> dict[str, Any]:
+    sanitized: dict[str, Any] = {}
+    for key, value in query.items():
+        if value is None:
+            continue
+        sanitized[str(key)] = "[REDACTED]" if is_sensitive_key(key) else value
+    return sanitized
+
+
+def format_request_display(method: str, path: str, query: dict[str, Any]) -> str:
+    suffix = ""
+    if query:
+        suffix = "?" + urllib.parse.urlencode(query, doseq=True)
+    return f"{method.upper()} {path}{suffix}"
+
+
+def selected_headers(headers: Any) -> dict[str, str]:
+    if not headers:
+        return {}
+    selected: dict[str, str] = {}
+    for key in REQUEST_ID_HEADERS:
+        value = headers.get(key)
+        if value:
+            selected[key] = str(value)
+    return selected
+
+
+def response_summary(body: Any) -> dict[str, Any]:
+    if isinstance(body, dict):
+        summary: dict[str, Any] = {
+            "type": "object",
+            "keys": sorted(str(key) for key in body.keys())[:25],
+        }
+        for key in ("totalCount", "totalPages", "total_count", "total_pages"):
+            if key in body:
+                summary[key] = body.get(key)
+        records = records_from(body)
+        if records:
+            summary["record_count"] = len(records)
+        return summary
+    if isinstance(body, list):
+        return {"type": "array", "record_count": len(body)}
+    if isinstance(body, str):
+        return {"type": "text", "text_length": len(body)}
+    return {"type": type(body).__name__}
+
+
+def redact_text(text: str) -> str:
+    return SENSITIVE_TEXT_RE.sub(r"\1[REDACTED]", text)
+
+
 def find_by_name(records: list[dict[str, Any]], name: str, resource: str) -> dict[str, Any]:
     wanted = normalize_name(name)
     matches = [item for item in records if normalize_name(item.get("name", "")) == wanted]
@@ -147,6 +356,7 @@ class ZscalerClient:
         auth_mode: str = "legacy",
         audience: str = DEFAULT_AUDIENCE,
         microtenant_id: str | None = None,
+        audit_logger: ApiAuditLogger | None = None,
     ) -> None:
         self.client_id = client_id
         self.client_secret = client_secret
@@ -157,6 +367,7 @@ class ZscalerClient:
         self.legacy_zpa_base_url = strip_slash(legacy_zpa_base_url)
         self.audience = audience
         self.microtenant_id = microtenant_id
+        self.audit_logger = audit_logger
         self._access_token: str | None = None
 
     @property
@@ -173,6 +384,63 @@ class ZscalerClient:
             return self.legacy_token()
         return self.oneapi_token()
 
+    def audit_begin(
+        self,
+        method: str,
+        url: str,
+        *,
+        path: str | None = None,
+        query: dict[str, Any] | None = None,
+        body_bytes: int = 0,
+    ) -> tuple[str, float, str]:
+        if not self.audit_logger:
+            return "", time.monotonic(), ""
+        return self.audit_logger.begin(method, url, path=path, query=query, body_bytes=body_bytes)
+
+    def audit_finish(
+        self,
+        request_id: str,
+        display: str,
+        started_at: float,
+        *,
+        status: int,
+        headers: Any,
+        body: Any,
+        body_bytes: int,
+    ) -> None:
+        if self.audit_logger:
+            self.audit_logger.finish(
+                request_id,
+                display,
+                started_at,
+                status=status,
+                headers=headers,
+                body=body,
+                body_bytes=body_bytes,
+            )
+
+    def audit_fail(
+        self,
+        request_id: str,
+        display: str,
+        started_at: float,
+        *,
+        status: int | None = None,
+        headers: Any = None,
+        error: str,
+        error_body: str | None = None,
+    ) -> None:
+        if self.audit_logger:
+            self.audit_logger.fail(
+                request_id,
+                display,
+                started_at,
+                status=status,
+                headers=headers,
+                error=error,
+                error_body=error_body,
+            )
+
     def legacy_token(self) -> str:
         url = f"{self.legacy_zpa_base_url}/signin"
         payload = urllib.parse.urlencode(
@@ -183,12 +451,34 @@ class ZscalerClient:
         ).encode("utf-8")
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        request_id, started_at, display = self.audit_begin("POST", url, path="/signin", body_bytes=len(payload))
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
-                body = load_json(response.read())
+                raw = response.read()
+                body = load_json(raw)
+                self.audit_finish(
+                    request_id,
+                    display,
+                    started_at,
+                    status=response.getcode(),
+                    headers=response.headers,
+                    body=body,
+                    body_bytes=len(raw),
+                )
         except urllib.error.HTTPError as error:
-            raise ApiError("POST", url, error.code, error.read().decode("utf-8", "replace")) from error
+            error_body = error.read().decode("utf-8", "replace")
+            self.audit_fail(
+                request_id,
+                display,
+                started_at,
+                status=error.code,
+                headers=error.headers,
+                error=f"HTTP {error.code}",
+                error_body=error_body,
+            )
+            raise ApiError("POST", url, error.code, error_body) from error
         except urllib.error.URLError as error:
+            self.audit_fail(request_id, display, started_at, error=str(error))
             raise CliError(f"Could not reach legacy ZPA sign-in endpoint {url}: {error}") from error
 
         if not isinstance(body, dict):
@@ -213,12 +503,39 @@ class ZscalerClient:
         ).encode("utf-8")
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
+        request_id, started_at, display = self.audit_begin(
+            "POST",
+            url,
+            path="/oauth2/v1/token",
+            body_bytes=len(payload),
+        )
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
-                body = load_json(response.read())
+                raw = response.read()
+                body = load_json(raw)
+                self.audit_finish(
+                    request_id,
+                    display,
+                    started_at,
+                    status=response.getcode(),
+                    headers=response.headers,
+                    body=body,
+                    body_bytes=len(raw),
+                )
         except urllib.error.HTTPError as error:
-            raise ApiError("POST", url, error.code, error.read().decode("utf-8", "replace")) from error
+            error_body = error.read().decode("utf-8", "replace")
+            self.audit_fail(
+                request_id,
+                display,
+                started_at,
+                status=error.code,
+                headers=error.headers,
+                error=f"HTTP {error.code}",
+                error_body=error_body,
+            )
+            raise ApiError("POST", url, error.code, error_body) from error
         except urllib.error.URLError as error:
+            self.audit_fail(request_id, display, started_at, error=str(error))
             raise CliError(f"Could not reach ZIdentity token endpoint {url}: {error}") from error
 
         if not isinstance(body, dict):
@@ -250,12 +567,41 @@ class ZscalerClient:
             data = json.dumps(body).encode("utf-8")
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
+        request_id, started_at, display = self.audit_begin(
+            method,
+            url,
+            path=path,
+            query=query,
+            body_bytes=len(data or b""),
+        )
         try:
             with urllib.request.urlopen(request, timeout=120) as response:
-                return load_json(response.read())
+                raw = response.read()
+                body = load_json(raw)
+                self.audit_finish(
+                    request_id,
+                    display,
+                    started_at,
+                    status=response.getcode(),
+                    headers=response.headers,
+                    body=body,
+                    body_bytes=len(raw),
+                )
+                return body
         except urllib.error.HTTPError as error:
-            raise ApiError(method, url, error.code, error.read().decode("utf-8", "replace")) from error
+            error_body = error.read().decode("utf-8", "replace")
+            self.audit_fail(
+                request_id,
+                display,
+                started_at,
+                status=error.code,
+                headers=error.headers,
+                error=f"HTTP {error.code}",
+                error_body=error_body,
+            )
+            raise ApiError(method, url, error.code, error_body) from error
         except urllib.error.URLError as error:
+            self.audit_fail(request_id, display, started_at, error=str(error))
             raise CliError(f"Could not reach ZPA endpoint {url}: {error}") from error
 
     def policy_set(self, policy_type: str) -> dict[str, Any]:
@@ -548,6 +894,10 @@ def command_add_scim_criteria(client: ZscalerClient, args: argparse.Namespace) -
 
 def build_client(args: argparse.Namespace) -> ZscalerClient:
     auth_mode = args.auth_mode or env("ZSCALER_AUTH_MODE", "legacy")
+    audit_logger = None
+    if getattr(args, "audit_log", None) or getattr(args, "api_progress", False):
+        audit_path = Path(args.audit_log) if getattr(args, "audit_log", None) else None
+        audit_logger = ApiAuditLogger(audit_path, progress=getattr(args, "api_progress", False))
     return ZscalerClient(
         client_id=require_env("ZSCALER_CLIENT_ID"),
         client_secret=require_env("ZSCALER_CLIENT_SECRET"),
@@ -558,6 +908,7 @@ def build_client(args: argparse.Namespace) -> ZscalerClient:
         legacy_zpa_base_url=args.zpa_base_url or env("ZSCALER_ZPA_BASE_URL", DEFAULT_LEGACY_ZPA_BASE_URL),
         audience=args.audience,
         microtenant_id=args.microtenant_id if args.microtenant_id is not None else env("ZSCALER_MICROTENANT_ID"),
+        audit_logger=audit_logger,
     )
 
 
@@ -569,6 +920,8 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--oneapi-base-url", help=f"Override ZSCALER_ONEAPI_BASE_URL for OneAPI auth. Default: {DEFAULT_ONEAPI_BASE_URL}")
     parser.add_argument("--audience", default=DEFAULT_AUDIENCE, help=f"OAuth audience. Default: {DEFAULT_AUDIENCE}")
     parser.add_argument("--microtenant-id", help="Optional ZPA microtenant ID. Use 0 for the default microtenant when required.")
+    parser.add_argument("--audit-log", help="Write HTTP audit events as JSON lines to this file.")
+    parser.add_argument("--api-progress", action="store_true", help="Print each API request start and finish line.")
 
 
 def add_policy_arguments(parser: argparse.ArgumentParser) -> None:
