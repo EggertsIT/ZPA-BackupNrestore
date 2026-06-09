@@ -26,6 +26,9 @@ This file records completed work, verification, skipped checks, and known risks.
   - Added the disclaimer and current policy-rule default to `ZPA_API_COVERAGE_AUDIT.md`.
   - Added an agent rule to preserve the disclaimer in future user-facing docs and UI.
   - Marked the Markdown review complete in `TASKS.md`.
+- Expanded HTTP audit logging from metadata-only records to full sanitized per-call request and response records.
+- Updated audit documentation to state that audit logs contain tenant configuration details and must be treated as sensitive operational records.
+- Rebuilt the local macOS app bundle so the desktop app includes full-detail audit logging.
 
 ### Current Code State
 
@@ -42,6 +45,11 @@ This file records completed work, verification, skipped checks, and known risks.
 - Passed: `sh -n "dist/ZPA-Backup and Restore.app/Contents/MacOS/zpa-backup-restore"`
 - Passed: verified `dist/ZPA-Backup and Restore.app/Contents/Resources/DISCLAIMER.md` exists.
 - Passed: Markdown consistency search for stale branch, test-count, old app-name, and policy default references.
+- Passed after full-detail audit change: `python3 -m py_compile zpa_policy_tool.py zpa_cloner.py zpa_cloner_app.py build_macos_app.py test_zpa_policy_tool.py test_zpa_cloner.py test_zpa_cloner_app.py`
+- Passed after full-detail audit change: `python3 -m unittest -v` with 37 tests.
+- Passed after full-detail audit change: `python3 build_macos_app.py`
+- Passed after full-detail audit change: `plutil -lint "dist/ZPA-Backup and Restore.app/Contents/Info.plist"`
+- Passed after full-detail audit change: `sh -n "dist/ZPA-Backup and Restore.app/Contents/MacOS/zpa-backup-restore"`
 - Type checking: skipped because no static type checker is configured yet.
 
 ### Notes

@@ -48,15 +48,21 @@ class AddScimConditionTests(unittest.TestCase):
                     "GET",
                     "https://example.test/mgmtconfig/v1/admin/customers/123/application",
                     path="/mgmtconfig/v1/admin/customers/123/application",
+                    headers={"Accept": "application/json", "Authorization": "Bearer hidden-token"},
                     query={"page": 1, "pagesize": 500, "client_secret": "do-not-log", "clientSecret": "also-redact"},
+                    body={"name": "CRM", "clientSecret": "request-secret"},
+                    body_bytes=48,
                 )
                 logger.finish(
                     request_id,
                     display,
                     started_at,
                     status=200,
-                    headers={"x-request-id": "request-1"},
-                    body={"totalPages": "1", "list": [{"id": "app-1", "name": "CRM"}]},
+                    headers={"x-request-id": "request-1", "set-cookie": "session=hidden"},
+                    body={
+                        "totalPages": "1",
+                        "list": [{"id": "app-1", "name": "CRM", "accessToken": "response-secret"}],
+                    },
                     body_bytes=128,
                 )
 
@@ -64,19 +70,30 @@ class AddScimConditionTests(unittest.TestCase):
             self.assertIn("api: GET /mgmtconfig/v1/admin/customers/123/application", output)
             self.assertNotIn("do-not-log", output)
             self.assertNotIn("also-redact", output)
+            self.assertNotIn("request-secret", output)
+            self.assertNotIn("hidden-token", output)
 
             raw_log = path.read_text(encoding="utf-8")
             self.assertNotIn("do-not-log", raw_log)
             self.assertNotIn("also-redact", raw_log)
+            self.assertNotIn("request-secret", raw_log)
+            self.assertNotIn("response-secret", raw_log)
+            self.assertNotIn("hidden-token", raw_log)
             records = [json.loads(line) for line in raw_log.splitlines()]
 
         self.assertEqual(records[0]["event"], "http.request.start")
         self.assertEqual(records[0]["query"]["client_secret"], "[REDACTED]")
         self.assertEqual(records[0]["query"]["clientSecret"], "[REDACTED]")
+        self.assertEqual(records[0]["request"]["headers"]["Accept"], "application/json")
+        self.assertEqual(records[0]["request"]["headers"]["Authorization"], "[REDACTED]")
+        self.assertEqual(records[0]["request"]["body"], {"name": "CRM", "clientSecret": "[REDACTED]"})
         self.assertEqual(records[1]["event"], "http.request.finish")
         self.assertEqual(records[1]["status"], 200)
         self.assertEqual(records[1]["response"]["record_count"], 1)
         self.assertEqual(records[1]["response_headers"]["x-request-id"], "request-1")
+        self.assertEqual(records[1]["response_headers"]["set-cookie"], "[REDACTED]")
+        self.assertEqual(records[1]["response_body"]["list"][0]["name"], "CRM")
+        self.assertEqual(records[1]["response_body"]["list"][0]["accessToken"], "[REDACTED]")
 
     def test_adds_scim_attribute_condition_to_scim_group_rule(self) -> None:
         rule = {

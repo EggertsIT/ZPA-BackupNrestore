@@ -39,13 +39,38 @@ SENSITIVE_QUERY_KEYS = {
     "authorization",
     "client_id",
     "client_secret",
+    "cookie",
     "password",
     "refresh_token",
     "secret",
     "token",
 }
+SENSITIVE_PAYLOAD_MARKERS = (
+    "secret",
+    "password",
+    "token",
+    "privatekey",
+    "private_key",
+    "apikey",
+    "api_key",
+    "authorization",
+    "clientid",
+    "client_id",
+    "clientsecret",
+    "cookie",
+    "client_secret",
+    "preshared",
+    "pre_shared",
+    "provisioningkey",
+    "provisioning_key",
+    "credential",
+    "session",
+    "setcookie",
+    "certificate",
+    "certchain",
+)
 SENSITIVE_TEXT_RE = re.compile(
-    r'("?(?:access_token|authorization|client_id|client_secret|password|refresh_token|secret|token)"?\s*[:=]\s*)("[^"]*"|[^,\s}]+)',
+    r'("?(?:access[_-]?token|accesstoken|authorization|client[_-]?id|clientid|client[_-]?secret|clientsecret|password|refresh[_-]?token|refreshtoken|secret|token)"?\s*[:=]\s*)("[^"]*"|[^,\s}]+)',
     re.IGNORECASE,
 )
 
@@ -66,9 +91,8 @@ class ApiError(CliError):
 class ApiAuditLogger:
     """Small JSONL audit logger for HTTP calls.
 
-    It deliberately avoids request bodies, authorization headers, and bearer
-    tokens. The stdout progress lines are meant for operators; the file records
-    the durable request/response timeline.
+    It records the durable request/response timeline with sanitized headers and
+    payloads. The stdout progress lines are meant for operators watching a run.
     """
 
     _counter = itertools.count(1)
@@ -97,12 +121,26 @@ class ApiAuditLogger:
         *,
         path: str | None = None,
         query: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        body: Any | None = None,
         body_bytes: int = 0,
     ) -> tuple[str, float, str]:
         request_id = f"req-{next(self._counter)}"
         split = urllib.parse.urlsplit(url)
         request_path = path or split.path or url
         clean_query = sanitize_query(query or urllib.parse.parse_qs(split.query))
+        clean_url = sanitized_url(split, request_path, clean_query)
+        request_record = {
+            "method": method.upper(),
+            "url": clean_url,
+            "scheme": split.scheme,
+            "host": split.netloc,
+            "path": request_path,
+            "query": clean_query,
+            "headers": sanitize_headers(headers or {}),
+            "body": sanitize_payload(body),
+            "body_bytes": body_bytes,
+        }
         display = format_request_display(method, request_path, clean_query)
         if self.progress:
             print(f"api: {display} start", flush=True)
@@ -114,6 +152,8 @@ class ApiAuditLogger:
             host=split.netloc,
             path=request_path,
             query=clean_query,
+            url=clean_url,
+            request=request_record,
             body_bytes=body_bytes,
         )
         return request_id, time.monotonic(), display
@@ -137,9 +177,10 @@ class ApiAuditLogger:
             request_id=request_id,
             status=status,
             duration_ms=duration_ms,
-            response_headers=selected_headers(headers),
+            response_headers=sanitize_headers(headers),
             response_bytes=body_bytes,
             response=response_summary(body),
+            response_body=sanitize_payload(body),
         )
 
     def fail(
@@ -162,8 +203,9 @@ class ApiAuditLogger:
             request_id=request_id,
             status=status,
             duration_ms=duration_ms,
-            response_headers=selected_headers(headers),
+            response_headers=sanitize_headers(headers),
             error=redact_text(error),
+            error_body=sanitize_error_body(error_body) if error_body else None,
             error_body_preview=redact_text(error_body[:2000]) if error_body else None,
             error_body_bytes=len(error_body.encode("utf-8")) if error_body else 0,
         )
@@ -255,9 +297,11 @@ def is_sensitive_key(key: Any) -> bool:
         "authorization",
         "clientid",
         "clientsecret",
+        "cookie",
         "password",
         "refreshtoken",
         "secret",
+        "setcookie",
         "token",
     }
     return (
@@ -265,6 +309,7 @@ def is_sensitive_key(key: Any) -> bool:
         or normalized.endswith("_secret")
         or normalized.endswith("_token")
         or compact in sensitive_compact_keys
+        or any(marker.replace("_", "") in compact for marker in SENSITIVE_PAYLOAD_MARKERS)
     )
 
 
@@ -277,6 +322,11 @@ def sanitize_query(query: dict[str, Any]) -> dict[str, Any]:
     return sanitized
 
 
+def sanitized_url(split: urllib.parse.SplitResult, path: str, query: dict[str, Any]) -> str:
+    encoded = urllib.parse.urlencode(query, doseq=True)
+    return urllib.parse.urlunsplit((split.scheme, split.netloc, path, encoded, ""))
+
+
 def format_request_display(method: str, path: str, query: dict[str, Any]) -> str:
     suffix = ""
     if query:
@@ -284,15 +334,46 @@ def format_request_display(method: str, path: str, query: dict[str, Any]) -> str
     return f"{method.upper()} {path}{suffix}"
 
 
-def selected_headers(headers: Any) -> dict[str, str]:
+def sanitize_headers(headers: Any) -> dict[str, str]:
     if not headers:
         return {}
-    selected: dict[str, str] = {}
-    for key in REQUEST_ID_HEADERS:
-        value = headers.get(key)
-        if value:
-            selected[key] = str(value)
-    return selected
+    sanitized: dict[str, str] = {}
+    items = headers.items() if hasattr(headers, "items") else dict(headers).items()
+    for key, value in items:
+        sanitized[str(key)] = "[REDACTED]" if is_sensitive_key(key) else str(value)
+    return sanitized
+
+
+def sanitize_payload(value: Any, key_name: str = "") -> Any:
+    if key_name and is_sensitive_key(key_name):
+        return "[REDACTED]"
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        return {str(key): sanitize_payload(child, str(key)) for key, child in value.items()}
+    if isinstance(value, list):
+        return [sanitize_payload(item, key_name) for item in value]
+    if isinstance(value, tuple):
+        return [sanitize_payload(item, key_name) for item in value]
+    if isinstance(value, bytes):
+        return redact_text(value.decode("utf-8", "replace"))
+    if isinstance(value, str):
+        return redact_text(value)
+    return value
+
+
+def parse_form_body(data: bytes | None) -> dict[str, Any] | None:
+    if not data:
+        return None
+    text = data.decode("utf-8", "replace")
+    return {key: values[0] if len(values) == 1 else values for key, values in urllib.parse.parse_qs(text).items()}
+
+
+def sanitize_error_body(text: str) -> Any:
+    try:
+        return sanitize_payload(json.loads(text))
+    except json.JSONDecodeError:
+        return redact_text(text)
 
 
 def response_summary(body: Any) -> dict[str, Any]:
@@ -391,11 +472,21 @@ class ZscalerClient:
         *,
         path: str | None = None,
         query: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+        body: Any | None = None,
         body_bytes: int = 0,
     ) -> tuple[str, float, str]:
         if not self.audit_logger:
             return "", time.monotonic(), ""
-        return self.audit_logger.begin(method, url, path=path, query=query, body_bytes=body_bytes)
+        return self.audit_logger.begin(
+            method,
+            url,
+            path=path,
+            query=query,
+            headers=headers,
+            body=body,
+            body_bytes=body_bytes,
+        )
 
     def audit_finish(
         self,
@@ -451,7 +542,14 @@ class ZscalerClient:
         ).encode("utf-8")
         headers = {"Content-Type": "application/x-www-form-urlencoded"}
         request = urllib.request.Request(url, data=payload, headers=headers, method="POST")
-        request_id, started_at, display = self.audit_begin("POST", url, path="/signin", body_bytes=len(payload))
+        request_id, started_at, display = self.audit_begin(
+            "POST",
+            url,
+            path="/signin",
+            headers=headers,
+            body=parse_form_body(payload),
+            body_bytes=len(payload),
+        )
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 raw = response.read()
@@ -507,6 +605,8 @@ class ZscalerClient:
             "POST",
             url,
             path="/oauth2/v1/token",
+            headers=headers,
+            body=parse_form_body(payload),
             body_bytes=len(payload),
         )
         try:
@@ -572,6 +672,8 @@ class ZscalerClient:
             url,
             path=path,
             query=query,
+            headers=headers,
+            body=body,
             body_bytes=len(data or b""),
         )
         try:

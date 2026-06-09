@@ -31,7 +31,8 @@ This project uses `SPEC.md`, `TASKS.md`, and `PROGRESS.md` to keep work scoped, 
 
 - Protect source tenants. Backup, compare, and restore-plan operations must not write to source.
 - Treat the configured destination tenant as the only restore write target.
-- Never write client secrets, bearer tokens, authorization headers, private keys, or raw successful API payloads to logs or source files.
+- Never write client secrets, bearer tokens, authorization headers, cookies, private keys, passwords, tokens, certificates, or known credential fields to logs or source files.
+- HTTP audit logs intentionally contain sanitized request and response payloads for tenant API calls; treat them as sensitive operational records.
 - Keep generated backups, logs, reports, local `.env` files, and app bundles ignored by Git.
 - Prefer conservative restore behavior: no deletes by default, high-impact resources gated, preflight before writes, dry-run before live restore.
 - Keep changes small and aligned with existing stdlib-only Python patterns.

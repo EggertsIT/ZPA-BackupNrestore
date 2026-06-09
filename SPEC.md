@@ -36,7 +36,8 @@ The tool must help an operator:
 - Legacy ZPA API is the default mode.
 - OneAPI mode exists but requires ZIdentity configuration.
 - Credentials must come from environment variables, `.env`, or UI fields.
-- Credentials, bearer tokens, authorization headers, request bodies, and raw successful API payloads must not be written to logs or source code.
+- Credentials, bearer tokens, authorization headers, cookies, private keys, passwords, client secrets, tokens, and known credential fields must not be written to logs or source code.
+- HTTP audit logs may contain sanitized request and response payloads for tenant API calls because they are audit evidence; treat those logs as sensitive operational records.
 
 ## Current Resource Coverage
 
@@ -105,9 +106,9 @@ Explicitly excluded from generic cloning:
 - CLI and UI output must show high-level stage progress.
 - API progress lines must show the current method/path/query before a request is made, so a stuck request is visible.
 - HTTP audit logs must be written as ignored JSON lines under `logs/` by default.
-- Audit logs must record request start, response status, duration, selected request/correlation headers, response bytes, response shape, and record counts.
-- Audit logs must not write bearer tokens, authorization headers, request bodies, client secrets, or raw successful response payloads.
-- Error body previews may be logged only when truncated and redacted.
+- Audit logs must record each API call with method, sanitized URL, query parameters, sanitized request headers, sanitized request body, response status, duration, sanitized response headers, response bytes, response shape, record counts, and sanitized response body.
+- Audit logs must not write bearer tokens, authorization headers, cookies, client secrets, passwords, private keys, tokens, certificates, or known credential fields.
+- Error bodies may be logged only when sanitized.
 
 ## UI Requirements
 

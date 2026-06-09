@@ -56,6 +56,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Add JSONL HTTP audit logs under ignored `logs/`.
 - [x] Redact secrets and tokens from audit output.
 - [x] Add UI capture and Open Log support for audit logs.
+- [x] Log full sanitized request and response details for each API call.
 - [ ] Add audit-log retention guidance to README or docs.
 - [ ] Add an audit-log summary command that prints slowest calls and failed calls.
 - [ ] Add timeout-specific error messages that identify the last in-flight endpoint.
@@ -88,7 +89,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Add unit tests for UI helper parsing.
 - [x] Add unit tests for single-rule SCIM condition edits.
 - [x] Add tests for application segment fast backup call behavior.
-- [x] Add tests for audit logger redaction and response metadata.
+- [x] Add tests for audit logger redaction and full sanitized request/response details.
 - [ ] Add a configured lint command.
 - [ ] Add a configured type checking command.
 - [ ] Add a smoke test command that exercises CLI help, coverage, validate, and report paths.
