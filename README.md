@@ -1,5 +1,9 @@
 # ZPA-Backup and Restore Tool
 
+## Disclaimer
+
+ZPA-Backup and Restore is an independent tool. It is not affiliated with, endorsed by, sponsored by, certified by, or supported by Zscaler, Inc. It is provided "as is", without warranty of any kind, and without any Zscaler support, maintenance, or service-level commitment. Operators are responsible for testing, validating, and approving all use before making changes in any tenant. See [DISCLAIMER.md](DISCLAIMER.md).
+
 Small CLI and desktop tooling for ZPA policy backup and restore work through the Zscaler ZPA API:
 
 - `zpa_policy_tool.py` edits one policy rule safely.

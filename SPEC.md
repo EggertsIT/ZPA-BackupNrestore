@@ -16,6 +16,13 @@ The tool must help an operator:
 - Dry-run restore actions before live writes.
 - Record clear operator logs and durable HTTP audit logs.
 
+## Disclaimer Requirement
+
+- The project must prominently state that it is independent and is not affiliated with, endorsed by, sponsored by, certified by, or supported by Zscaler, Inc.
+- The project must state that it is provided "as is" without warranty of any kind.
+- The project must state that Zscaler does not provide support, maintenance, service-level commitment, or warranty for this tool.
+- User-facing documentation and the desktop UI must keep this disclaimer visible.
+
 ## Operating Model
 
 - Source tenant access is read-only in backup, compare, and restore-plan workflows.

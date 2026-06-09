@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 
 from zpa_cloner_app import (
+    DISCLAIMER_TEXT,
     auth_mode_for_profile,
     build_policy_args,
     credential_env_name,
@@ -17,6 +18,11 @@ from zpa_resources import POLICY_TYPES
 
 
 class ZpaClonerAppHelperTests(unittest.TestCase):
+    def test_disclaimer_text_is_visible_and_explicit(self) -> None:
+        self.assertIn("Not affiliated", DISCLAIMER_TEXT)
+        self.assertIn("Zscaler", DISCLAIMER_TEXT)
+        self.assertIn("without warranty", DISCLAIMER_TEXT)
+
     def test_build_policy_args_defaults_to_all_policy_rule_types(self) -> None:
         expected = []
         for policy_type in POLICY_TYPES:

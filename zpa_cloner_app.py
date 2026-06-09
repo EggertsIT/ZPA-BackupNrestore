@@ -26,6 +26,10 @@ APP_WORK_DIR_NAME = APP_DISPLAY_NAME
 DEFAULT_REPORT_NAME = "zpa-backup-restore-report.html"
 DEFAULT_LEGACY_ZPA_BASE_URL = "https://config.private.zscaler.com"
 DEFAULT_ONEAPI_BASE_URL = "https://api.zsapi.net"
+DISCLAIMER_TEXT = (
+    "Independent tool. Not affiliated with, endorsed by, sponsored by, certified by, or supported by "
+    "Zscaler, Inc. Provided as is, without warranty or Zscaler support."
+)
 
 
 def running_from_macos_bundle(path: Path | None = None) -> bool:
@@ -279,6 +283,7 @@ class ZPAClonerApp:
         style.configure("TLabel", background="#f6f8fb", foreground="#1f2933")
         style.configure("Panel.TLabel", background="#ffffff", foreground="#1f2933")
         style.configure("Muted.TLabel", background="#ffffff", foreground="#64748b")
+        style.configure("Disclaimer.TLabel", background="#f6f8fb", foreground="#7f1d1d")
         style.configure("Title.TLabel", font=(font_family, 18, "bold"), background="#f6f8fb")
         style.configure("Status.TLabel", font=(font_family, 11, "bold"), background="#f6f8fb")
         style.configure("TLabelframe", background="#ffffff", bordercolor="#d8dee9", relief="solid")
@@ -298,6 +303,14 @@ class ZPAClonerApp:
         header.pack(fill="x", pady=(0, 12))
         ttk.Label(header, text=APP_DISPLAY_NAME, style="Title.TLabel").pack(side="left")
         ttk.Label(header, textvariable=self.status_var, style="Status.TLabel").pack(side="right")
+
+        ttk.Label(
+            outer,
+            text=DISCLAIMER_TEXT,
+            style="Disclaimer.TLabel",
+            wraplength=1080,
+            justify="left",
+        ).pack(fill="x", pady=(0, 12))
 
         content = ttk.PanedWindow(outer, orient="horizontal")
         content.pack(fill="both", expand=True)

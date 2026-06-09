@@ -6,6 +6,13 @@ This file records completed work, verification, skipped checks, and known risks.
 
 ### Completed
 
+- Added a top-priority independent-tool disclaimer:
+  - Created `DISCLAIMER.md`.
+  - Added a prominent README disclaimer.
+  - Added a desktop UI disclaimer banner.
+  - Included `DISCLAIMER.md` in the macOS app bundle resources.
+  - Added the disclaimer requirement to `SPEC.md`.
+  - Marked the disclaimer task complete in `TASKS.md`.
 - Created first-pass project control docs:
   - `SPEC.md`
   - `TASKS.md`
@@ -17,14 +24,18 @@ This file records completed work, verification, skipped checks, and known risks.
 
 ### Current Code State
 
-- Branch: `feature/logging-improvements`.
-- Existing uncommitted implementation work is present for logging improvements and application segment fast backup.
-- Documentation files were added without reverting or modifying unrelated existing changes.
+- Branch: `main`.
+- `main` matched `origin/main` before the disclaimer change.
+- Disclaimer changes are currently uncommitted.
 
 ### Checks
 
-- Passed: `python3 -m py_compile zpa_cloner.py zpa_policy_tool.py zpa_resources.py zpa_integrity.py zpa_report.py zpa_cloner_app.py test_zpa_cloner.py test_zpa_policy_tool.py test_zpa_cloner_app.py`
-- Passed: `python3 -m unittest -v` with 36 tests.
+- Passed: `python3 -m py_compile zpa_cloner.py zpa_policy_tool.py zpa_resources.py zpa_integrity.py zpa_report.py zpa_cloner_app.py build_macos_app.py test_zpa_cloner.py test_zpa_policy_tool.py test_zpa_cloner_app.py`
+- Passed: `python3 -m unittest -v` with 37 tests.
+- Passed: `python3 build_macos_app.py`
+- Passed: `plutil -lint "dist/ZPA-Backup and Restore.app/Contents/Info.plist"`
+- Passed: `sh -n "dist/ZPA-Backup and Restore.app/Contents/MacOS/zpa-backup-restore"`
+- Passed: verified `dist/ZPA-Backup and Restore.app/Contents/Resources/DISCLAIMER.md` exists.
 - Type checking: skipped because no static type checker is configured yet.
 
 ### Notes

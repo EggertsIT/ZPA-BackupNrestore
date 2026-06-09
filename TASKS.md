@@ -9,6 +9,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Create `AGENTS.md` with the working loop and project rules.
 - [x] Create `PROGRESS.md` with initial project status.
 - [x] Remove duplicate `TASK.md`; use `TASKS.md` as the only task checklist.
+- [x] Add mandatory no-affiliation, no-support, no-warranty disclaimer requirement.
 
 ## 1. Safety And Validation
 
@@ -98,6 +99,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Document the graphical process in `docs/PROCESS.md`.
 - [x] Document current ZPA API coverage limitations.
 - [x] Document audit log behavior.
+- [x] Add prominent independent-tool, no-Zscaler-support, no-warranty disclaimer.
 - [ ] Document exact source-read and destination-write boundaries in README.
 - [ ] Document production rehearsal steps using a lab tenant.
 - [ ] Document known unsupported ZPA API sections and why they are excluded.

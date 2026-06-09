@@ -33,6 +33,7 @@ RUNTIME_FILES = [
     "zpa_report.py",
     ".env.example",
     "README.md",
+    "DISCLAIMER.md",
     "ZPA_API_COVERAGE_AUDIT.md",
 ]
 
