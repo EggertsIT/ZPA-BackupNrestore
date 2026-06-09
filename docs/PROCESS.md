@@ -1,5 +1,7 @@
 # ZPA-Backup and Restore Process
 
+ZPA-Backup and Restore is an independent tool. It is not affiliated with, endorsed by, sponsored by, certified by, or supported by Zscaler, Inc. It is provided "as is", without warranty of any kind. See [../DISCLAIMER.md](../DISCLAIMER.md).
+
 This page describes how the tool operates, which actions read or write a tenant, and how backup, restore, validation, and reporting fit together.
 
 ## Feature Map

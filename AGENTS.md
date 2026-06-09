@@ -38,6 +38,7 @@ This project uses `SPEC.md`, `TASKS.md`, and `PROGRESS.md` to keep work scoped, 
 - Avoid broad refactors while implementing a checklist task.
 - Update tests when behavior changes.
 - Update documentation when operator behavior, safety boundaries, or API coverage changes.
+- Keep the independent-tool, no-Zscaler-support, no-warranty disclaimer visible in user-facing documentation and the desktop UI.
 - Do not claim full ZPA API compliance unless `ZPA_API_COVERAGE_AUDIT.md` and implementation prove it.
 
 ## Current Tooling

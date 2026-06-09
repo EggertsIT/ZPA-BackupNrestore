@@ -100,6 +100,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Document current ZPA API coverage limitations.
 - [x] Document audit log behavior.
 - [x] Add prominent independent-tool, no-Zscaler-support, no-warranty disclaimer.
+- [x] Review Markdown docs after the disclaimer/main push and correct stale state.
 - [ ] Document exact source-read and destination-write boundaries in README.
 - [ ] Document production rehearsal steps using a lab tenant.
 - [ ] Document known unsupported ZPA API sections and why they are excluded.

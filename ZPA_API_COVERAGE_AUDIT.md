@@ -1,6 +1,9 @@
 # ZPA API Coverage Audit
 
 Audit date: 2026-06-02
+Last documentation review: 2026-06-09
+
+ZPA-Backup and Restore is an independent tool. It is not affiliated with, endorsed by, sponsored by, certified by, or supported by Zscaler, Inc. It is provided "as is", without warranty of any kind. See [DISCLAIMER.md](DISCLAIMER.md).
 
 Source used: Zscaler Automation Hub sitemap for ZPA API reference routes:
 https://automate.zscaler.com/sitemap.xml
@@ -28,7 +31,7 @@ The Automation Hub route set currently exposes 189 ZPA API reference pages acros
 | machine_groups | read | Inventory only |
 | posture_profiles | read | Inventory/reference only |
 | trusted_networks | read | Inventory/reference only |
-| policy_rules | write | Policy rule CRUD/reorder family partially covered; defaults to `ACCESS_POLICY` |
+| policy_rules | write | Policy rule CRUD/reorder family partially covered; defaults to all supported policy rule types |
 | idps | read | Identity reference mapping |
 | scim_attributes | read | Identity reference mapping |
 | scim_groups | read | Identity reference mapping |

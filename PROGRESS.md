@@ -21,12 +21,17 @@ This file records completed work, verification, skipped checks, and known risks.
 - Captured current implemented behavior from README, process docs, coverage audit, and source layout.
 - Recorded current assumptions for lint and type checking.
 - Removed duplicate `TASK.md`; `TASKS.md` is now the only task checklist.
+- Reviewed Markdown documentation after the disclaimer push:
+  - Added the disclaimer to `docs/PROCESS.md`.
+  - Added the disclaimer and current policy-rule default to `ZPA_API_COVERAGE_AUDIT.md`.
+  - Added an agent rule to preserve the disclaimer in future user-facing docs and UI.
+  - Marked the Markdown review complete in `TASKS.md`.
 
 ### Current Code State
 
-- Branch: `main`.
-- `main` matched `origin/main` before the disclaimer change.
-- Disclaimer changes are currently uncommitted.
+- Branch at time of this documentation review: `main`.
+- Documentation review corrected stale state from the earlier disclaimer work.
+- Generated app bundles, backups, logs, and local env files remain ignored by Git.
 
 ### Checks
 
@@ -36,6 +41,7 @@ This file records completed work, verification, skipped checks, and known risks.
 - Passed: `plutil -lint "dist/ZPA-Backup and Restore.app/Contents/Info.plist"`
 - Passed: `sh -n "dist/ZPA-Backup and Restore.app/Contents/MacOS/zpa-backup-restore"`
 - Passed: verified `dist/ZPA-Backup and Restore.app/Contents/Resources/DISCLAIMER.md` exists.
+- Passed: Markdown consistency search for stale branch, test-count, old app-name, and policy default references.
 - Type checking: skipped because no static type checker is configured yet.
 
 ### Notes
