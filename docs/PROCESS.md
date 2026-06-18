@@ -20,17 +20,19 @@ flowchart LR
     CLI --> Restore[Restore]
     CLI --> Report[HTML Report]
     CLI --> Coverage[Coverage]
+    CLI --> Encryption[Optional backup encryption]
 
     SingleRule[zpa_policy_tool.py<br/>single rule edit] --> DirectPolicyWrite[Direct policy rule update]
 
-    Backup --> SourceBackup[(source backup JSON)]
-    Backup --> DestinationBackup[(destination backup JSON)]
+    Backup --> SourceBackup[(source backup JSON<br/>or .json.enc)]
+    Backup --> DestinationBackup[(destination backup JSON<br/>or .json.enc)]
     Compare --> Diff[(diff JSON)]
     Compare --> CompareReport[(diff HTML)]
     RestorePlan --> RestoreDiff[(restore diff JSON)]
     RestorePlan --> RestoreReport[(restore plan HTML)]
     DryRun --> DryRunResult[(dry-run result JSON/HTML)]
     Restore --> RestoreResult[(restore result JSON/HTML)]
+    Encryption --> OpenSSL[OpenSSL-compatible<br/>external decryption]
 ```
 
 ## Tenant Safety Boundary
@@ -55,14 +57,15 @@ In the normal source-to-destination workflow, Source is only read. The only way 
 ```mermaid
 flowchart TD
     Start[Open desktop UI] --> Credentials[Enter Source and Destination credentials]
-    Credentials --> Scope[Choose policy rule type checkboxes]
+    Credentials --> BackupSecurity[Optional Backup Security<br/>encrypt backups and enter passphrase]
+    BackupSecurity --> Scope[Choose policy rule type checkboxes]
 
     Scope --> BackupSource[Backup Source]
     Scope --> BackupDestination[Backup Destination]
     Scope --> Compare[Compare Source to Destination]
 
-    BackupSource --> SourceFile[(source backup JSON)]
-    BackupDestination --> DestinationFile[(destination backup JSON)]
+    BackupSource --> SourceFile[(source backup JSON<br/>or .json.enc)]
+    BackupDestination --> DestinationFile[(destination backup JSON<br/>or .json.enc)]
     Compare --> SourceFile
     Compare --> DestinationFile
     Compare --> DiffFile[(diff JSON)]
@@ -70,7 +73,7 @@ flowchart TD
 
     SourceFile --> Choose[Choose Desired Backup]
     Choose --> RestorePlan[Build Restore Plan]
-    RestorePlan --> CurrentDestination[(fresh destination backup)]
+    RestorePlan --> CurrentDestination[(fresh destination backup<br/>or .json.enc)]
     RestorePlan --> RestoreDiff[(restore diff JSON)]
     RestorePlan --> RestoreReport[(restore plan HTML)]
 
@@ -81,6 +84,8 @@ flowchart TD
     Review --> Restore[Restore]
     Restore --> RestoreResult[(restore result JSON/HTML)]
 ```
+
+When backup encryption is enabled, source and destination backup files use `.json.enc` instead of `.json`. The passphrase is entered in the masked Backup Security field or supplied through the configured environment variable.
 
 ## Backup And Compare
 
@@ -100,10 +105,43 @@ sequenceDiagram
     Tool->>Tool: Normalize objects and remove tenant-specific IDs
     Tool->>Tool: Match resources by type and name
     Tool->>Files: Write source backup, destination backup, diff, report
+    opt Backup encryption enabled
+        Tool->>Files: Store source and destination backups as .json.enc
+    end
     Tool-->>Operator: Activity log, artifact paths, summary counts
 ```
 
 Backup and compare do not write to either tenant.
+
+## Encrypted Backup Storage
+
+```mermaid
+flowchart TD
+    Enable[Operator enables encrypted backups] --> Passphrase[Passphrase from masked UI field<br/>or environment variable]
+    Passphrase --> OpenSSL[OpenSSL enc<br/>aes-256-cbc + PBKDF2]
+    OpenSSL --> EncryptedBackup[(backup.json.enc)]
+
+    EncryptedBackup --> ToolRead[Tool reads encrypted backup]
+    ToolRead --> Validate[Validate manifest checksum]
+    EncryptedBackup --> External[External OpenSSL decrypt]
+    External --> PlainBackup[(backup.json)]
+
+    Diff[(diff JSON)] --> PlainArtifacts[Plaintext artifacts]
+    Report[(HTML report)] --> PlainArtifacts
+    Audit[(audit log)] --> PlainArtifacts
+```
+
+Encrypted backups are designed to be portable. They can be decrypted without this tool by setting the passphrase environment variable and running OpenSSL:
+
+```sh
+export ZPA_BACKUP_PASSPHRASE="..."
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 \
+  -in backups/<timestamp>-source.json.enc \
+  -out backups/<timestamp>-source.json \
+  -pass env:ZPA_BACKUP_PASSPHRASE
+```
+
+Only backup JSON files are encrypted by `--encrypt-backups`. Diff JSON, HTML reports, restore result files, and HTTP audit logs remain plaintext and must be protected separately.
 
 ## Restore From A Past Snapshot
 
@@ -115,12 +153,15 @@ sequenceDiagram
     participant Files as Local Files
 
     Operator->>Tool: Choose Desired Backup
-    Tool->>Files: Read selected backup JSON
+    Tool->>Files: Read selected backup JSON or JSON.enc
     Operator->>Tool: Build Restore Plan
     Tool->>Dest: GET current destination resources
     Dest-->>Tool: Current destination configuration
     Tool->>Tool: Compute desired state vs current destination
     Tool->>Files: Write restore-target backup, restore diff, restore plan report
+    opt Backup encryption enabled
+        Tool->>Files: Store fresh destination backup as .json.enc
+    end
     Operator->>Tool: Validate
     Tool->>Files: Validate backup manifests, checksums, and diff structure
     Operator->>Tool: Preflight
@@ -139,7 +180,10 @@ Restore from a past snapshot does not require live Source tenant access. It uses
 
 ```mermaid
 flowchart TD
-    Files[(backup and diff files)] --> Validate[Validate]
+    Files[(backup and diff files)] --> Encrypted{Backup file is .json.enc?}
+    Encrypted -- yes --> Decrypt[Decrypt with passphrase]
+    Decrypt --> Validate
+    Encrypted -- no --> Validate
     Validate --> Manifest{Manifest present<br/>and checksum valid?}
     Manifest -- no --> BlockValidate[Validation fails]
     Manifest -- yes --> DiffShape{Diff structure valid?}
@@ -163,7 +207,7 @@ flowchart TD
     Restore -- yes --> Apply[Write to Destination]
 ```
 
-Validate checks file integrity and structure. Preflight checks whether the restore set is safe and internally consistent before write operations are allowed.
+Validate decrypts encrypted backups before checking file integrity and structure. Preflight checks whether the restore set is safe and internally consistent before write operations are allowed.
 
 ## Restore Write Order
 
@@ -229,14 +273,14 @@ Default behavior is conservative: no writes without explicit confirmation, delet
 
 ```mermaid
 flowchart TD
-    LiveSource[Live Source] --> SourceBackup[(timestamp-source.json)]
-    LiveDestination[Live Destination] --> TargetBackup[(timestamp-target.json)]
+    LiveSource[Live Source] --> SourceBackup[(timestamp-source.json<br/>or .json.enc)]
+    LiveDestination[Live Destination] --> TargetBackup[(timestamp-target.json<br/>or .json.enc)]
     SourceBackup --> Diff[(timestamp-diff.json)]
     TargetBackup --> Diff
     Diff --> DiffReport[(timestamp-diff.html)]
 
     DesiredBackup[(older desired backup)] --> RestorePlan[restore-plan]
-    LiveDestination --> RestoreTarget[(timestamp-restore-target.json)]
+    LiveDestination --> RestoreTarget[(timestamp-restore-target.json<br/>or .json.enc)]
     RestoreTarget --> RestoreDiff[(timestamp-restore-diff.json)]
     DesiredBackup --> RestoreDiff
     RestoreDiff --> RestorePlanReport[(timestamp-restore-diff.html)]

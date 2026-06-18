@@ -15,6 +15,7 @@ This file records completed work, verification, skipped checks, and known risks.
 - Added transparent encrypted backup reads for validate, diff, preflight, report, restore-plan, apply, and restore.
 - Added desktop UI controls for encrypted backup storage and masked passphrase entry.
 - Updated README, SPEC, TASKS, and `.env.example` for encrypted backup operation and external OpenSSL decryption.
+- Updated `docs/PROCESS.md` with the encrypted backup UI step, `.json.enc` artifact flow, validation behavior, and external OpenSSL decryption path.
 
 ### Checks
 
