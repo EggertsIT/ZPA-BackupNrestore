@@ -1,15 +1,30 @@
+import json
+import os
+import shutil
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 from zpa_cloner import (
     IDMapper,
+    DEFAULT_BACKUP_PASSPHRASE_ENV,
+    OPENSSL_CIPHER,
+    OPENSSL_DIGEST,
+    OPENSSL_INTERNAL_PASSPHRASE_ENV,
+    OPENSSL_PBKDF2_ITERATIONS,
     apply_diff,
     compute_diff,
     detail_items,
     diff_action_totals,
     effective_policy_types,
+    encrypted_path,
     expected_detail_skip,
+    load_json_file,
+    openssl_env,
     policy_types_for_restore_source,
     seed_identity_refs,
+    save_backup_json,
     status_label,
 )
 from zpa_integrity import attach_manifest, preflight_restore, validate_backup
@@ -119,6 +134,71 @@ class ZpaClonerTests(unittest.TestCase):
 
     def test_cloner_defaults_to_all_policy_rule_types(self) -> None:
         self.assertEqual(effective_policy_types([]), POLICY_TYPES)
+
+    def test_encrypted_path_adds_enc_suffix(self) -> None:
+        self.assertEqual(encrypted_path(Path("backup.json")), Path("backup.json.enc"))
+        self.assertEqual(encrypted_path(Path("backup.json.enc")), Path("backup.json.enc"))
+
+    def test_openssl_env_does_not_inherit_tenant_credentials(self) -> None:
+        env_name = "ZPA_SOURCE_CLIENT_SECRET"
+        old_value = os.environ.get(env_name)
+        os.environ[env_name] = "tenant-secret"
+        try:
+            run_env = openssl_env("backup-passphrase")
+
+            self.assertEqual(run_env[OPENSSL_INTERNAL_PASSPHRASE_ENV], "backup-passphrase")
+            self.assertNotIn(env_name, run_env)
+            self.assertNotIn(DEFAULT_BACKUP_PASSPHRASE_ENV, run_env)
+        finally:
+            if old_value is None:
+                os.environ.pop(env_name, None)
+            else:
+                os.environ[env_name] = old_value
+
+    @unittest.skipUnless(shutil.which("openssl"), "OpenSSL is required for encrypted backup tests")
+    def test_encrypted_backup_round_trips_and_can_be_decrypted_with_openssl(self) -> None:
+        backup = self.minimal_backup()
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            path = Path(tmp_dir) / "backup.json.enc"
+            env_name = DEFAULT_BACKUP_PASSPHRASE_ENV
+            old_value = os.environ.get(env_name)
+            os.environ[env_name] = "test-passphrase"
+            try:
+                save_backup_json(path, backup, encrypted=True)
+                raw = path.read_bytes()
+
+                self.assertNotIn(b'"resources"', raw)
+                self.assertEqual(load_json_file(path), backup)
+
+                result = subprocess.run(
+                    [
+                        "openssl",
+                        "enc",
+                        "-d",
+                        f"-{OPENSSL_CIPHER}",
+                        "-pbkdf2",
+                        "-iter",
+                        OPENSSL_PBKDF2_ITERATIONS,
+                        "-md",
+                        OPENSSL_DIGEST,
+                        "-in",
+                        str(path),
+                        "-pass",
+                        f"env:{env_name}",
+                    ],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=os.environ.copy(),
+                    check=False,
+                )
+
+                self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))
+                self.assertEqual(json.loads(result.stdout.decode("utf-8")), backup)
+            finally:
+                if old_value is None:
+                    os.environ.pop(env_name, None)
+                else:
+                    os.environ[env_name] = old_value
 
     def test_expected_detail_skip_handles_default_microtenant_not_found(self) -> None:
         error = CliError("resource.not.found: No resource exists with the given id/name :0")

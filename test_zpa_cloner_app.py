@@ -3,6 +3,7 @@ from pathlib import Path
 
 from zpa_cloner_app import (
     DISCLAIMER_TEXT,
+    build_encryption_args,
     auth_mode_for_profile,
     build_policy_args,
     credential_env_name,
@@ -42,6 +43,10 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
                 "INSPECTION_POLICY",
             ],
         )
+
+    def test_build_encryption_args_adds_global_flag_when_enabled(self) -> None:
+        self.assertEqual(build_encryption_args(True), ["--encrypt-backups"])
+        self.assertEqual(build_encryption_args(False), [])
 
     def test_extract_artifacts_from_cli_output(self) -> None:
         self.assertEqual(extract_artifact("audit log: logs/run.log"), ("audit_log", "logs/run.log"))

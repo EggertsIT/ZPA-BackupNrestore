@@ -19,6 +19,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Gate high-impact microtenant writes.
 - [x] Add strict manifest validation.
 - [x] Add restore preflight checks.
+- [x] Add optional encrypted backup storage with OpenSSL-compatible external decryption.
 - [ ] Add a preflight check that reports unresolved named dependencies before writes.
 - [ ] Add a preflight check that flags read-only reference mismatches by resource type.
 - [ ] Add a dry-run summary that groups skipped writes by reason.
@@ -31,6 +32,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Back up all supported policy rule types by default.
 - [x] Back up IdP, SCIM attribute, and SCIM group references for ID mapping.
 - [x] Include read-only inventory for CBI banners, machine groups, posture profiles, and trusted networks.
+- [x] Read encrypted `.json.enc` backups in validate, diff, preflight, report, restore-plan, and restore workflows.
 - [ ] Add read-only SAML attribute inventory and mapping.
 - [ ] Add read-only version profile inventory.
 - [ ] Add read-only Zscaler cloud inventory.
@@ -70,6 +72,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Add restore-from-past-snapshot workflow controls.
 - [x] Add activity panel output streaming.
 - [x] Add artifact fields for backups, diff, reports, restore result, and audit log.
+- [x] Add UI controls for encrypted backup storage and passphrase entry.
 - [ ] Add a UI command to open the runtime work directory.
 - [ ] Add a UI command to open the latest backup folder.
 - [ ] Add visible command duration for completed runs.
@@ -90,6 +93,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Add unit tests for single-rule SCIM condition edits.
 - [x] Add tests for application segment fast backup call behavior.
 - [x] Add tests for audit logger redaction and full sanitized request/response details.
+- [x] Add tests for OpenSSL-compatible encrypted backup round-trip and external decrypt.
 - [ ] Add a configured lint command.
 - [ ] Add a configured type checking command.
 - [ ] Add a smoke test command that exercises CLI help, coverage, validate, and report paths.
@@ -102,6 +106,7 @@ This file is the canonical checklist for the project. Work from top to bottom un
 - [x] Document audit log behavior.
 - [x] Add prominent independent-tool, no-Zscaler-support, no-warranty disclaimer.
 - [x] Review Markdown docs after the disclaimer/main push and correct stale state.
+- [x] Document encrypted backup storage and standalone OpenSSL decryption.
 - [ ] Document exact source-read and destination-write boundaries in README.
 - [ ] Document production rehearsal steps using a lab tenant.
 - [ ] Document known unsupported ZPA API sections and why they are excluded.

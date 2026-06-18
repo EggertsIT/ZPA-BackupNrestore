@@ -6,6 +6,10 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
+import shlex
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -41,6 +45,12 @@ LOGS_DIR = Path("logs")
 APP_DISPLAY_NAME = "ZPA-Backup and Restore"
 DEFAULT_PAGE_SIZE = 500
 LOG_LEVELS = ("normal", "verbose")
+DEFAULT_OPENSSL_BIN = "openssl"
+DEFAULT_BACKUP_PASSPHRASE_ENV = "ZPA_BACKUP_PASSPHRASE"
+OPENSSL_INTERNAL_PASSPHRASE_ENV = "ZPA_BACKUP_OPENSSL_PASSPHRASE"
+OPENSSL_CIPHER = "aes-256-cbc"
+OPENSSL_DIGEST = "sha256"
+OPENSSL_PBKDF2_ITERATIONS = "200000"
 
 
 def now_stamp() -> str:
@@ -72,8 +82,153 @@ def save_json(path: Path, payload: Any) -> None:
     path.write_text(dump_json(payload) + "\n", encoding="utf-8")
 
 
-def load_json_file(path: Path) -> Any:
+def is_encrypted_path(path: Path) -> bool:
+    return path.name.endswith(".enc")
+
+
+def encrypted_path(path: Path) -> Path:
+    if is_encrypted_path(path):
+        return path
+    return path.with_suffix(path.suffix + ".enc")
+
+
+def openssl_binary(openssl_bin: str) -> str:
+    resolved = shutil.which(openssl_bin)
+    if not resolved:
+        raise CliError(
+            f"OpenSSL executable not found: {openssl_bin!r}. "
+            "Install OpenSSL or pass --openssl-bin with the full path."
+        )
+    return resolved
+
+
+def backup_passphrase(passphrase_env: str) -> str:
+    value = env(passphrase_env)
+    if not value:
+        raise CliError(
+            f"Missing backup encryption passphrase. Set {passphrase_env} "
+            "before reading or writing encrypted backups."
+        )
+    return value
+
+
+def openssl_env(passphrase: str) -> dict[str, str]:
+    run_env = {
+        key: os.environ[key]
+        for key in (
+            "PATH",
+            "HOME",
+            "TMPDIR",
+            "LANG",
+            "LC_ALL",
+            "OPENSSL_CONF",
+            "OPENSSL_MODULES",
+        )
+        if key in os.environ
+    }
+    run_env[OPENSSL_INTERNAL_PASSPHRASE_ENV] = passphrase
+    return run_env
+
+
+def openssl_enc_command(openssl_bin: str, *, decrypt: bool = False) -> list[str]:
+    command = [
+        openssl_binary(openssl_bin),
+        "enc",
+        f"-{OPENSSL_CIPHER}",
+        "-salt",
+        "-pbkdf2",
+        "-iter",
+        OPENSSL_PBKDF2_ITERATIONS,
+        "-md",
+        OPENSSL_DIGEST,
+        "-pass",
+        f"env:{OPENSSL_INTERNAL_PASSPHRASE_ENV}",
+    ]
+    if decrypt:
+        command.insert(2, "-d")
+    return command
+
+
+def openssl_decrypt_command(path: Path, passphrase_env: str = DEFAULT_BACKUP_PASSPHRASE_ENV) -> str:
+    input_path = shlex.quote(str(path))
+    output_path = shlex.quote(str(path.with_suffix("")))
+    return (
+        f"openssl enc -d -{OPENSSL_CIPHER} "
+        f"-pbkdf2 -iter {OPENSSL_PBKDF2_ITERATIONS} -md {OPENSSL_DIGEST} "
+        f"-in {input_path} -out {output_path} -pass env:{passphrase_env}"
+    )
+
+
+def save_encrypted_json(
+    path: Path,
+    payload: Any,
+    *,
+    passphrase_env: str = DEFAULT_BACKUP_PASSPHRASE_ENV,
+    openssl_bin: str = DEFAULT_OPENSSL_BIN,
+) -> None:
+    passphrase = backup_passphrase(passphrase_env)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = (dump_json(payload) + "\n").encode("utf-8")
+    command = [*openssl_enc_command(openssl_bin), "-out", str(path)]
+    result = subprocess.run(
+        command,
+        input=data,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=openssl_env(passphrase),
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", "replace").strip()
+        raise CliError(f"OpenSSL backup encryption failed for {path}: {stderr}")
+
+
+def decrypt_json_text(
+    path: Path,
+    *,
+    passphrase_env: str = DEFAULT_BACKUP_PASSPHRASE_ENV,
+    openssl_bin: str = DEFAULT_OPENSSL_BIN,
+) -> str:
+    passphrase = backup_passphrase(passphrase_env)
+    command = [*openssl_enc_command(openssl_bin, decrypt=True), "-in", str(path)]
+    result = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env=openssl_env(passphrase),
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", "replace").strip()
+        raise CliError(f"OpenSSL backup decryption failed for {path}: {stderr}")
+    return result.stdout.decode("utf-8")
+
+
+def save_backup_json(
+    path: Path,
+    payload: Any,
+    *,
+    encrypted: bool = False,
+    passphrase_env: str = DEFAULT_BACKUP_PASSPHRASE_ENV,
+    openssl_bin: str = DEFAULT_OPENSSL_BIN,
+) -> None:
+    if encrypted:
+        save_encrypted_json(path, payload, passphrase_env=passphrase_env, openssl_bin=openssl_bin)
+    else:
+        save_json(path, payload)
+
+
+def load_json_file(
+    path: Path,
+    *,
+    passphrase_env: str = DEFAULT_BACKUP_PASSPHRASE_ENV,
+    openssl_bin: str = DEFAULT_OPENSSL_BIN,
+) -> Any:
     try:
+        if is_encrypted_path(path):
+            return json.loads(
+                decrypt_json_text(path, passphrase_env=passphrase_env, openssl_bin=openssl_bin)
+            )
         return json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:
         raise CliError(f"File not found: {path}") from error
@@ -335,7 +490,14 @@ def backup_tenant(
     policy_types: list[str],
     *,
     log_level: str = "normal",
+    encrypt_backups: bool = False,
+    passphrase_env: str = DEFAULT_BACKUP_PASSPHRASE_ENV,
+    openssl_bin: str = DEFAULT_OPENSSL_BIN,
 ) -> dict[str, Any]:
+    if encrypt_backups:
+        backup_passphrase(passphrase_env)
+        openssl_binary(openssl_bin)
+
     warnings: list[str] = []
     backup = {
         "meta": {
@@ -385,7 +547,19 @@ def backup_tenant(
     )
     print_warning_summary(f"backup {label}", warnings)
     attach_manifest(backup)
-    save_json(out_path, backup)
+    save_backup_json(
+        out_path,
+        backup,
+        encrypted=encrypt_backups,
+        passphrase_env=passphrase_env,
+        openssl_bin=openssl_bin,
+    )
+    if encrypt_backups:
+        print(f"backup {label}: encrypted with OpenSSL {OPENSSL_CIPHER} PBKDF2")
+        print(
+            f"backup {label}: set {passphrase_env}, "
+            f"then decrypt with: {openssl_decrypt_command(out_path, passphrase_env)}"
+        )
     print(f"backup {label}: complete ({item_count_text(backup['resources'])}; warnings={len(warnings)})")
     return backup
 
@@ -743,13 +917,47 @@ def apply_diff(
     return result
 
 
-def backup_paths() -> tuple[Path, Path, Path]:
+def backup_paths(*, encrypt_backups: bool = False) -> tuple[Path, Path, Path]:
     stamp = now_stamp()
+    source = BACKUPS_DIR / f"{stamp}-source.json"
+    target = BACKUPS_DIR / f"{stamp}-target.json"
     return (
-        BACKUPS_DIR / f"{stamp}-source.json",
-        BACKUPS_DIR / f"{stamp}-target.json",
+        encrypted_path(source) if encrypt_backups else source,
+        encrypted_path(target) if encrypt_backups else target,
         BACKUPS_DIR / f"{stamp}-diff.json",
     )
+
+
+def backup_tenant_for_args(
+    client: ZscalerClient,
+    label: str,
+    out_path: Path,
+    policy_types: list[str],
+    args: argparse.Namespace,
+) -> dict[str, Any]:
+    return backup_tenant(
+        client,
+        label,
+        out_path,
+        policy_types,
+        log_level=args.log_level,
+        encrypt_backups=args.encrypt_backups,
+        passphrase_env=args.backup_passphrase_env,
+        openssl_bin=args.openssl_bin,
+    )
+
+
+def load_json_for_args(path: str | Path, args: argparse.Namespace) -> Any:
+    return load_json_file(
+        Path(path),
+        passphrase_env=args.backup_passphrase_env,
+        openssl_bin=args.openssl_bin,
+    )
+
+
+def restore_target_backup_path(stamp: str, *, encrypt_backups: bool = False) -> Path:
+    path = BACKUPS_DIR / f"{stamp}-restore-target.json"
+    return encrypted_path(path) if encrypt_backups else path
 
 
 def policy_types_for_restore_source(source_backup: dict[str, Any], fallback: list[str]) -> list[str]:
@@ -766,18 +974,18 @@ def effective_policy_types(policy_types: list[str]) -> list[str]:
 
 
 def command_backup(args: argparse.Namespace) -> None:
-    source_path, target_path, _ = backup_paths()
+    source_path, target_path, _ = backup_paths(encrypt_backups=args.encrypt_backups)
     if args.tenant in ("source", "both"):
-        backup_tenant(profile_client("source", args), "source", source_path, args.policy_type, log_level=args.log_level)
+        backup_tenant_for_args(profile_client("source", args), "source", source_path, args.policy_type, args)
         print(f"source backup: {source_path}")
     if args.tenant in ("target", "both"):
-        backup_tenant(profile_client("target", args), "target", target_path, args.policy_type, log_level=args.log_level)
+        backup_tenant_for_args(profile_client("target", args), "target", target_path, args.policy_type, args)
         print(f"target backup: {target_path}")
 
 
 def command_diff(args: argparse.Namespace) -> None:
-    source = load_json_file(Path(args.source_backup))
-    target = load_json_file(Path(args.target_backup))
+    source = load_json_for_args(args.source_backup, args)
+    target = load_json_for_args(args.target_backup, args)
     if not args.allow_invalid_backup:
         issues = [
             *(f"source backup: {issue}" for issue in validate_backup(source, strict=args.strict_manifest)),
@@ -802,11 +1010,11 @@ def command_diff(args: argparse.Namespace) -> None:
 
 
 def command_plan(args: argparse.Namespace) -> None:
-    source_path, target_path, diff_path = backup_paths()
+    source_path, target_path, diff_path = backup_paths(encrypt_backups=args.encrypt_backups)
     report_path = diff_path.with_suffix(".html")
     print_run_header("plan", mode="read-only", policy_types=args.policy_type)
-    source = backup_tenant(profile_client("source", args), "source", source_path, args.policy_type, log_level=args.log_level)
-    target = backup_tenant(profile_client("target", args), "target", target_path, args.policy_type, log_level=args.log_level)
+    source = backup_tenant_for_args(profile_client("source", args), "source", source_path, args.policy_type, args)
+    target = backup_tenant_for_args(profile_client("target", args), "target", target_path, args.policy_type, args)
     diff = compute_diff(source, target)
     save_json(diff_path, diff)
     write_report(
@@ -825,20 +1033,20 @@ def command_plan(args: argparse.Namespace) -> None:
 
 def command_restore_plan(args: argparse.Namespace) -> None:
     source_path = Path(args.source_backup)
-    source = load_json_file(source_path)
+    source = load_json_for_args(source_path, args)
     if not args.allow_invalid_backup:
         issues = validate_backup(source, strict=True)
         if issues:
             raise CliError("Source backup validation failed:\n" + "\n".join(f"- {issue}" for issue in issues))
 
     stamp = now_stamp()
-    target_path = BACKUPS_DIR / f"{stamp}-restore-target.json"
+    target_path = restore_target_backup_path(stamp, encrypt_backups=args.encrypt_backups)
     diff_path = BACKUPS_DIR / f"{stamp}-restore-diff.json"
     report_path = diff_path.with_suffix(".html")
     policy_types = policy_types_for_restore_source(source, args.policy_type)
 
     print_run_header("restore-plan", mode="read-only", policy_types=policy_types)
-    target = backup_tenant(profile_client("target", args), "target", target_path, policy_types, log_level=args.log_level)
+    target = backup_tenant_for_args(profile_client("target", args), "target", target_path, policy_types, args)
     diff = compute_diff(source, target)
     save_json(diff_path, diff)
     write_report(
@@ -858,9 +1066,9 @@ def command_restore_plan(args: argparse.Namespace) -> None:
 def command_apply(args: argparse.Namespace) -> None:
     if not args.yes and not args.dry_run:
         raise CliError("Refusing to write without --yes. Run plan/diff first and review the output.")
-    source = load_json_file(Path(args.source_backup))
-    target = load_json_file(Path(args.target_backup))
-    diff = load_json_file(Path(args.diff))
+    source = load_json_for_args(args.source_backup, args)
+    target = load_json_for_args(args.target_backup, args)
+    diff = load_json_for_args(args.diff, args)
     issues = preflight_restore(
         source,
         target,
@@ -912,10 +1120,10 @@ def command_restore(args: argparse.Namespace) -> None:
 
 
 def command_report(args: argparse.Namespace) -> None:
-    source = load_json_file(Path(args.source_backup)) if args.source_backup else None
-    target = load_json_file(Path(args.target_backup)) if args.target_backup else None
-    diff = load_json_file(Path(args.diff)) if args.diff else None
-    apply_result = load_json_file(Path(args.apply_result)) if args.apply_result else None
+    source = load_json_for_args(args.source_backup, args) if args.source_backup else None
+    target = load_json_for_args(args.target_backup, args) if args.target_backup else None
+    diff = load_json_for_args(args.diff, args) if args.diff else None
+    apply_result = load_json_for_args(args.apply_result, args) if args.apply_result else None
     write_report(
         Path(args.out),
         title=args.title,
@@ -954,7 +1162,7 @@ def command_validate(args: argparse.Namespace) -> None:
         raise CliError("Nothing to validate. Pass --backup and/or --diff.")
     failed = False
     for backup_path in args.backup:
-        backup = load_json_file(Path(backup_path))
+        backup = load_json_for_args(backup_path, args)
         issues = validate_backup(backup, strict=args.strict_manifest)
         if issues:
             failed = True
@@ -964,7 +1172,7 @@ def command_validate(args: argparse.Namespace) -> None:
         else:
             print(f"{backup_path}: valid")
     for diff_path in args.diff:
-        diff = load_json_file(Path(diff_path))
+        diff = load_json_for_args(diff_path, args)
         issues = validate_diff(diff)
         if issues:
             failed = True
@@ -978,9 +1186,9 @@ def command_validate(args: argparse.Namespace) -> None:
 
 
 def command_preflight(args: argparse.Namespace) -> None:
-    source = load_json_file(Path(args.source_backup))
-    target = load_json_file(Path(args.target_backup))
-    diff = load_json_file(Path(args.diff))
+    source = load_json_for_args(args.source_backup, args)
+    target = load_json_for_args(args.target_backup, args)
+    diff = load_json_for_args(args.diff, args)
     issues = preflight_restore(
         source,
         target,
@@ -1021,6 +1229,24 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-api-progress",
         action="store_true",
         help="Do not print per-request API progress lines to stdout. The audit log is still written.",
+    )
+    parser.add_argument(
+        "--encrypt-backups",
+        action="store_true",
+        help="Write backup JSON files as OpenSSL-encrypted .json.enc files.",
+    )
+    parser.add_argument(
+        "--backup-passphrase-env",
+        default=env("ZPA_BACKUP_PASSPHRASE_ENV", DEFAULT_BACKUP_PASSPHRASE_ENV),
+        help=(
+            "Environment variable containing the backup encryption passphrase. "
+            f"Default: {DEFAULT_BACKUP_PASSPHRASE_ENV}."
+        ),
+    )
+    parser.add_argument(
+        "--openssl-bin",
+        default=env("ZPA_OPENSSL_BIN", DEFAULT_OPENSSL_BIN),
+        help="OpenSSL executable used for backup encryption/decryption. Default: openssl.",
     )
     parser.add_argument(
         "--policy-type",

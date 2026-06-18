@@ -72,6 +72,27 @@ CLI commands default to clean operator logs with run banners, per-resource backu
 
 Each backup/restore workflow also writes an ignored HTTP audit log under `logs/<timestamp>-<command>.log` and prints `api:` progress lines while requests are in flight. The audit log is JSON lines and records each API call with method, URL, query parameters, sanitized request headers, sanitized request body, response status, duration, sanitized response headers, response bytes, response shape, record counts, and sanitized response body. It redacts bearer tokens, authorization headers, cookies, client secrets, passwords, private keys, tokens, certificates, and known credential fields. Because it contains tenant configuration details, treat audit logs as sensitive operational records. Use `--audit-log <path>` to choose the file and `--no-api-progress` to keep the screen output quieter while still writing the audit file.
 
+Encrypted backups can be written with OpenSSL-compatible `.json.enc` files:
+
+```sh
+export ZPA_BACKUP_PASSPHRASE="use-a-long-unique-passphrase"
+python3 zpa_cloner.py --encrypt-backups plan
+```
+
+This encrypts source and destination backup JSON files. Diffs, HTML reports, restore results, and audit logs remain normal files and must be protected separately. Commands that read backups, including `validate`, `diff`, `preflight`, `report`, `restore-plan`, and `restore`, can read `.json.enc` files when `ZPA_BACKUP_PASSPHRASE` is set. The desktop UI exposes the same behavior in the Backup Security panel with `Encrypt backup files` and a masked passphrase field.
+
+Backups are encrypted with OpenSSL `enc`, `aes-256-cbc`, PBKDF2, 200000 iterations, and SHA-256 so they can be decrypted without this tool:
+
+```sh
+export ZPA_BACKUP_PASSPHRASE="use-a-long-unique-passphrase"
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 \
+  -in backups/<timestamp>-source.json.enc \
+  -out backups/<timestamp>-source.json \
+  -pass env:ZPA_BACKUP_PASSPHRASE
+```
+
+Use `--backup-passphrase-env <NAME>` to read the passphrase from another environment variable and `--openssl-bin <path>` when the OpenSSL executable is not on `PATH`. Run `validate --strict-manifest` after decryption or before restore to verify the backup manifest checksum.
+
 Application Segment backup uses the paginated `GET /application` response directly because that endpoint returns detailed application segment records. This avoids one extra `GET /application/{id}` call per application segment while still using `pagesize=500` pagination for larger tenants.
 
 For a graphical end-to-end process description covering backup, compare, restore from past snapshots, validation, preflight, safeguards, and tenant write boundaries, see [docs/PROCESS.md](docs/PROCESS.md).

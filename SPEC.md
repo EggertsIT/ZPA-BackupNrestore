@@ -84,6 +84,10 @@ Explicitly excluded from generic cloning:
 - Policy rule type checkboxes affect policy rules only, not application segments or dependency resources.
 - Application segment backup should use the paginated `GET /application` list endpoint directly because it returns detailed records.
 - Pagination must use the maximum practical page size currently configured as `pagesize=500`.
+- Backup writers may optionally store source and destination backup JSON files as OpenSSL-compatible `.json.enc` files.
+- Encrypted backup files must be readable by validate, diff, preflight, report, restore-plan, and restore workflows when the passphrase is available.
+- Backup encryption passphrases must come from an environment variable or masked UI field and must not be written to source code, audit logs, or operator command lines.
+- Encrypted backup documentation must include a direct OpenSSL decrypt command so operators can decrypt a backup without this tool.
 
 ## Diff And Restore Requirements
 
@@ -140,3 +144,4 @@ Use the closest available checks for each change:
 - No dedicated type checker is currently configured; type checking is skipped until a tool such as mypy or pyright is added.
 - The Zscaler API documentation can change. Re-check official docs before broadening API coverage or changing endpoint semantics.
 - Restore safety is more important than breadth of API coverage.
+- Encrypted backups use OpenSSL `enc` with `aes-256-cbc`, PBKDF2, 200000 iterations, and SHA-256 because it is available without adding a Python package dependency and can be decrypted outside the tool. This portable format is not AEAD; strict manifest validation remains the integrity check after decryption.

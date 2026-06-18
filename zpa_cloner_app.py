@@ -26,6 +26,7 @@ APP_WORK_DIR_NAME = APP_DISPLAY_NAME
 DEFAULT_REPORT_NAME = "zpa-backup-restore-report.html"
 DEFAULT_LEGACY_ZPA_BASE_URL = "https://config.private.zscaler.com"
 DEFAULT_ONEAPI_BASE_URL = "https://api.zsapi.net"
+BACKUP_PASSPHRASE_ENV = "ZPA_BACKUP_PASSPHRASE"
 DISCLAIMER_TEXT = (
     "Independent tool. Not affiliated with, endorsed by, sponsored by, certified by, or supported by "
     "Zscaler, Inc. Provided as is, without warranty or Zscaler support."
@@ -149,6 +150,10 @@ def build_policy_args(text: str) -> list[str]:
     return args
 
 
+def build_encryption_args(encrypt_backups: bool) -> list[str]:
+    return ["--encrypt-backups"] if encrypt_backups else []
+
+
 def credential_env_name(profile: str, field_name: str) -> str:
     return f"{PROFILE_PREFIXES[profile]}{field_name}"
 
@@ -254,6 +259,8 @@ class ZPAClonerApp:
         self.allow_high_impact_var = tk.BooleanVar(value=False)
         self.allow_failed_backups_var = tk.BooleanVar(value=False)
         self.ignore_preflight_var = tk.BooleanVar(value=False)
+        self.encrypt_backups_var = tk.BooleanVar(value=False)
+        self.backup_passphrase_var = tk.StringVar(value=os.environ.get(BACKUP_PASSPHRASE_ENV, ""))
         self.policy_vars = {
             policy_type: tk.BooleanVar(value=True)
             for policy_type in POLICY_TYPES
@@ -324,6 +331,7 @@ class ZPAClonerApp:
         self._build_env_panel(left)
         self._build_credentials_panel(left)
         self._build_policy_panel(left)
+        self._build_backup_security_panel(left)
         self._build_artifact_panel(left)
         self._build_safeguard_panel(left)
         self._build_action_panel(left)
@@ -407,6 +415,18 @@ class ZPAClonerApp:
         buttons.pack(fill="x", pady=(8, 0))
         ttk.Button(buttons, text="Access Only", command=self.select_access_only).pack(side="left")
         ttk.Button(buttons, text="All Rule Types", command=self.select_all_policies).pack(side="left", padx=(8, 0))
+
+    def _build_backup_security_panel(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="Backup Security", padding=10)
+        frame.pack(fill="x", pady=(0, 10))
+
+        ttk.Checkbutton(frame, text="Encrypt backup files", variable=self.encrypt_backups_var).pack(anchor="w")
+        row = ttk.Frame(frame, style="Panel.TFrame")
+        row.pack(fill="x", pady=(8, 0))
+        ttk.Label(row, text="Passphrase", style="Panel.TLabel", width=14).pack(side="left")
+        entry = ttk.Entry(row, textvariable=self.backup_passphrase_var, show="*")
+        entry.pack(side="left", fill="x", expand=True, padx=(8, 0))
+        self.secret_entries.append(entry)
 
     def _build_artifact_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Artifacts", padding=10)
@@ -660,6 +680,12 @@ class ZPAClonerApp:
             args.extend(["--policy-type", policy_type])
         return args
 
+    def encryption_args(self) -> list[str]:
+        return build_encryption_args(self.encrypt_backups_var.get())
+
+    def global_args(self) -> list[str]:
+        return [*self.encryption_args(), *self.policy_args()]
+
     def ensure_policy_scope(self) -> bool:
         if not self.selected_policy_types():
             self._show_error("Select at least one policy type.")
@@ -671,14 +697,14 @@ class ZPAClonerApp:
             return
         if not self._require_profiles("backup source", ("source",)):
             return
-        self._run_command("Backup Source", self.policy_args() + ["backup", "source"])
+        self._run_command("Backup Source", self.global_args() + ["backup", "source"])
 
     def run_backup_target(self) -> None:
         if not self.ensure_policy_scope():
             return
         if not self._require_profiles("backup destination", ("target",)):
             return
-        self._run_command("Backup Destination", self.policy_args() + ["backup", "target"])
+        self._run_command("Backup Destination", self.global_args() + ["backup", "target"])
 
     def choose_desired_backup(self) -> None:
         self._open_file(self.source_backup_var, "json")
@@ -688,7 +714,7 @@ class ZPAClonerApp:
             return
         if not self._require_profiles("plan", ("source", "target")):
             return
-        self._run_command("Compare Source to Destination", self.policy_args() + ["plan"])
+        self._run_command("Compare Source to Destination", self.global_args() + ["plan"])
 
     def run_restore_plan(self) -> None:
         source_backup = self.source_backup_var.get().strip()
@@ -697,7 +723,7 @@ class ZPAClonerApp:
             return
         if not self._require_profiles("restore from backup", ("target",)):
             return
-        args = [*self.policy_args(), "restore-plan", "--source-backup", source_backup]
+        args = [*self.global_args(), "restore-plan", "--source-backup", source_backup]
         if not self.strict_manifest_var.get():
             args.append("--allow-invalid-backup")
         self._run_command("Restore From Backup", args)
@@ -829,6 +855,9 @@ class ZPAClonerApp:
             return
         command = [sys.executable, "-u", str(CLI_PATH), *args]
         run_env = self.effective_env()
+        backup_passphrase = self.backup_passphrase_var.get()
+        if backup_passphrase:
+            run_env[BACKUP_PASSPHRASE_ENV] = backup_passphrase
         display = " ".join(self._quote_part(part) for part in command)
         self._append_log(f"$ {display}")
         self.command_running = True
@@ -978,7 +1007,7 @@ class ZPAClonerApp:
             return [("HTML files", "*.html"), ("All files", "*.*")]
         if kind == "log":
             return [("Log files", "*.log"), ("All files", "*.*")]
-        return [("JSON files", "*.json"), ("All files", "*.*")]
+        return [("JSON and encrypted files", ("*.json", "*.json.enc", "*.enc")), ("All files", "*.*")]
 
     def _default_report_path(self) -> str:
         diff = self.diff_var.get().strip()
