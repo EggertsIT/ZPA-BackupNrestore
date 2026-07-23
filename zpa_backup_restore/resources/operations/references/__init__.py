@@ -1,0 +1,30 @@
+"""Read-only platform and restore-reference operations."""
+
+from .get_cloud_connector_group import OPERATION as GET_CLOUD_CONNECTOR_GROUP
+from .get_enrollment_certificate import OPERATION as GET_ENROLLMENT_CERTIFICATE
+from .list_browser_access_groups import OPERATION as LIST_BROWSER_ACCESS_GROUPS
+from .list_cloud_connector_groups import OPERATION as LIST_CLOUD_CONNECTOR_GROUPS
+from .list_enrollment_certificates import OPERATION as LIST_ENROLLMENT_CERTIFICATES
+from .list_version_profiles import OPERATION as LIST_VERSION_PROFILES
+from .list_zscaler_clouds import OPERATION as LIST_ZSCALER_CLOUDS
+
+OPERATIONS = (
+    LIST_CLOUD_CONNECTOR_GROUPS,
+    GET_CLOUD_CONNECTOR_GROUP,
+    LIST_VERSION_PROFILES,
+    LIST_ZSCALER_CLOUDS,
+    LIST_ENROLLMENT_CERTIFICATES,
+    GET_ENROLLMENT_CERTIFICATE,
+    LIST_BROWSER_ACCESS_GROUPS,
+)
+
+__all__ = [
+    "GET_CLOUD_CONNECTOR_GROUP",
+    "GET_ENROLLMENT_CERTIFICATE",
+    "LIST_BROWSER_ACCESS_GROUPS",
+    "LIST_CLOUD_CONNECTOR_GROUPS",
+    "LIST_ENROLLMENT_CERTIFICATES",
+    "LIST_VERSION_PROFILES",
+    "LIST_ZSCALER_CLOUDS",
+    "OPERATIONS",
+]

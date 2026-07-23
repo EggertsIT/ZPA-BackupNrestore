@@ -8,11 +8,13 @@ import shutil
 import stat
 from pathlib import Path
 
+from zpa_backup_restore import __version__
+
 
 APP_NAME = "ZPA-Backup and Restore"
 BUNDLE_ID = "de.zslab.zpa-backup-restore"
 EXECUTABLE_NAME = "zpa-backup-restore"
-VERSION = "0.1.0"
+VERSION = __version__
 
 ROOT = Path(__file__).resolve().parent
 DIST_DIR = ROOT / "dist"
@@ -25,6 +27,7 @@ LEGACY_APP_PATHS = [
 ]
 
 RUNTIME_FILES = [
+    "zpa_backup_restore",
     "zpa_cloner_app.py",
     "zpa_cloner.py",
     "zpa_policy_tool.py",
@@ -33,6 +36,7 @@ RUNTIME_FILES = [
     "zpa_report.py",
     ".env.example",
     "README.md",
+    "docs",
     "DISCLAIMER.md",
     "ZPA_API_COVERAGE_AUDIT.md",
 ]
@@ -130,7 +134,15 @@ def copy_runtime_files() -> None:
         source = ROOT / file_name
         if not source.exists():
             raise FileNotFoundError(source)
-        shutil.copy2(source, RESOURCES_DIR / file_name)
+        destination = RESOURCES_DIR / file_name
+        if source.is_dir():
+            shutil.copytree(
+                source,
+                destination,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"),
+            )
+        else:
+            shutil.copy2(source, destination)
 
 
 def build() -> Path:

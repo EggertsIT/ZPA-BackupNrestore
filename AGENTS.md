@@ -6,11 +6,13 @@ This project uses `SPEC.md`, `TASKS.md`, and `PROGRESS.md` to keep work scoped, 
 
 1. Read `SPEC.md`.
 2. Read `TASKS.md`.
-3. Choose the next unchecked task that is not blocked by an earlier unchecked dependency.
+3. When the user specifies a scope, select the matching checklist item. Otherwise,
+   choose the next unchecked task in the active milestone that is not blocked by
+   an earlier dependency.
 4. Implement only that task.
 5. Write or update tests for the task.
 6. Run the relevant checks:
-   - Syntax/lint substitute: `python3 -m py_compile ...`
+   - Syntax/lint substitute: `python3 -m compileall -q zpa_backup_restore *.py`
    - Type checking: currently not configured; record as skipped in `PROGRESS.md`.
    - Tests: `python3 -m unittest -v` or a narrower relevant test command.
    - macOS bundle checks when app packaging changes: `python3 build_macos_app.py`, `plutil -lint`, and `sh -n` for the launcher.
@@ -34,7 +36,7 @@ This project uses `SPEC.md`, `TASKS.md`, and `PROGRESS.md` to keep work scoped, 
 - Never write client secrets, bearer tokens, authorization headers, cookies, private keys, passwords, tokens, certificates, or known credential fields to logs or source files.
 - HTTP audit logs intentionally contain sanitized request and response payloads for tenant API calls; treat them as sensitive operational records.
 - Keep generated backups, logs, reports, local `.env` files, and app bundles ignored by Git.
-- Prefer conservative restore behavior: no deletes by default, high-impact resources gated, preflight before writes, dry-run before live restore.
+- Prefer conservative restore behavior: no deletes by default, high-impact resources gated, preflight and offline simulation before live restore.
 - Keep changes small and aligned with existing stdlib-only Python patterns.
 - Avoid broad refactors while implementing a checklist task.
 - Update tests when behavior changes.
@@ -54,8 +56,9 @@ This project uses `SPEC.md`, `TASKS.md`, and `PROGRESS.md` to keep work scoped, 
 ## Common Commands
 
 ```sh
-python3 -m py_compile zpa_cloner.py zpa_policy_tool.py zpa_resources.py zpa_integrity.py zpa_report.py zpa_cloner_app.py
+python3 -m compileall -q zpa_backup_restore *.py
 python3 -m unittest -v
+python3 -m zpa_backup_restore --help
 python3 build_macos_app.py
 plutil -lint "dist/ZPA-Backup and Restore.app/Contents/Info.plist"
 sh -n "dist/ZPA-Backup and Restore.app/Contents/MacOS/zpa-backup-restore"

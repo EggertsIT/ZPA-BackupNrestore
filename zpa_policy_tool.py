@@ -18,6 +18,8 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from zpa_backup_restore.errors import ApiError, CliError
+
 
 DEFAULT_ONEAPI_BASE_URL = "https://api.zsapi.net"
 DEFAULT_LEGACY_ZPA_BASE_URL = "https://config.private.zscaler.com"
@@ -73,19 +75,6 @@ SENSITIVE_TEXT_RE = re.compile(
     r'("?(?:access[_-]?token|accesstoken|authorization|client[_-]?id|clientid|client[_-]?secret|clientsecret|password|refresh[_-]?token|refreshtoken|secret|token)"?\s*[:=]\s*)("[^"]*"|[^,\s}]+)',
     re.IGNORECASE,
 )
-
-
-class CliError(Exception):
-    """Expected user-facing error."""
-
-
-class ApiError(CliError):
-    def __init__(self, method: str, url: str, status: int, body: str) -> None:
-        self.method = method
-        self.url = url
-        self.status = status
-        self.body = body
-        super().__init__(f"{method} {url} failed with HTTP {status}: {body}")
 
 
 class ApiAuditLogger:

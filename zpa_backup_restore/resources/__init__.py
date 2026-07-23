@@ -1,0 +1,11 @@
+"""Resource-specific ZPA API definitions."""
+
+from .registry import MIGRATION_ORDER, POLICY_TYPES, READ_ONLY_REFERENCE_RESOURCES, RESOURCES, RESOURCE_SPECS
+
+__all__ = [
+    "MIGRATION_ORDER",
+    "POLICY_TYPES",
+    "READ_ONLY_REFERENCE_RESOURCES",
+    "RESOURCES",
+    "RESOURCE_SPECS",
+]

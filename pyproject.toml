@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zpa-backup-restore"
+dynamic = ["version"]
+description = "Guarded ZPA tenant backup, comparison, and restore tooling"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "DISCLAIMER.md" }
+authors = [{ name = "EggertsIT" }]
+dependencies = []
+
+[project.scripts]
+zpa-backup-restore = "zpa_backup_restore.cli:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "zpa_backup_restore.version.__version__" }
+
+[tool.setuptools.packages.find]
+include = ["zpa_backup_restore*"]
+
+[tool.setuptools]
+include-package-data = false
+py-modules = [
+  "zpa_cloner",
+  "zpa_cloner_app",
+  "zpa_integrity",
+  "zpa_policy_tool",
+  "zpa_report",
+  "zpa_resources",
+]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["__pycache__/*", "*.pyc", "*.pyo"]

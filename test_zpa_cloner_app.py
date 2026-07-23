@@ -2,15 +2,28 @@ import unittest
 from pathlib import Path
 
 from zpa_cloner_app import (
+    ACTION_TOOLTIPS,
+    ARTIFACT_TOOLTIPS,
+    COMPACT_GRID_COLUMNS,
+    CREDENTIAL_FIELDS,
+    CREDENTIAL_TOOLTIPS,
     DISCLAIMER_TEXT,
-    build_encryption_args,
+    LEFT_PANEL_TABS,
+    SAFEGUARD_TOOLTIPS,
+    TAB_TOOLTIPS,
     auth_mode_for_profile,
+    build_encryption_args,
     build_policy_args,
+    build_restore_selection_args,
+    compact_grid_position,
     credential_env_name,
     default_work_dir,
     extract_artifact,
     missing_env,
     parse_env_lines,
+    parse_restore_selectors,
+    policy_display_name,
+    resource_display_name,
     required_env_for_profile,
     running_from_macos_bundle,
     status_from_line,
@@ -19,6 +32,85 @@ from zpa_resources import POLICY_TYPES
 
 
 class ZpaClonerAppHelperTests(unittest.TestCase):
+    def test_left_panel_uses_six_focused_tabs(self) -> None:
+        self.assertEqual(
+            LEFT_PANEL_TABS,
+            ("Workflow", "Tenants", "Options", "Scope", "Artifacts", "Status"),
+        )
+
+    def test_contextual_tooltips_cover_navigation_actions_and_technical_fields(self) -> None:
+        expected_actions = {
+            "Backup Source",
+            "Backup Destination",
+            "Compare Source to Destination",
+            "Choose Desired Backup",
+            "Build Restore Plan",
+            "Validate",
+            "Preflight",
+            "Simulate",
+            "Restore",
+            "Snapshots",
+            "Latest Inventory",
+            "Audit Summary",
+            "Verify Ledger",
+            "Report",
+            "Coverage",
+        }
+        expected_safeguards = {
+            "Strict manifest",
+            "Allow deletes",
+            "Allow high-impact",
+            "Allow endpoint-error backups",
+            "Bypass preflight block",
+        }
+        expected_artifacts = {
+            "Desired backup",
+            "Destination backup",
+            "Restore diff",
+            "Report",
+            "Reviewed simulation",
+            "Restore result",
+            "Audit log",
+        }
+
+        self.assertEqual(set(TAB_TOOLTIPS), set(LEFT_PANEL_TABS))
+        self.assertEqual(set(ACTION_TOOLTIPS), expected_actions)
+        self.assertEqual(set(SAFEGUARD_TOOLTIPS), expected_safeguards)
+        self.assertEqual(set(CREDENTIAL_TOOLTIPS), {field[0] for field in CREDENTIAL_FIELDS})
+        self.assertEqual(set(ARTIFACT_TOOLTIPS), expected_artifacts)
+        all_text = [
+            *TAB_TOOLTIPS.values(),
+            *ACTION_TOOLTIPS.values(),
+            *SAFEGUARD_TOOLTIPS.values(),
+            *CREDENTIAL_TOOLTIPS.values(),
+            *ARTIFACT_TOOLTIPS.values(),
+        ]
+        self.assertTrue(all(text.endswith(".") and len(text) >= 30 for text in all_text))
+        self.assertIn("Destination tenant", ACTION_TOOLTIPS["Restore"])
+        self.assertIn("weakens", SAFEGUARD_TOOLTIPS["Bypass preflight block"])
+
+    def test_compact_grid_keeps_ten_policy_types_to_five_rows(self) -> None:
+        positions = [
+            compact_grid_position(index)
+            for index in range(len(POLICY_TYPES))
+        ]
+
+        self.assertEqual(COMPACT_GRID_COLUMNS, 2)
+        self.assertEqual(max(row for row, _column in positions), 4)
+        self.assertEqual({column for _row, column in positions}, {0, 1})
+
+    def test_compact_grid_rejects_invalid_coordinates(self) -> None:
+        with self.assertRaises(ValueError):
+            compact_grid_position(-1)
+        with self.assertRaises(ValueError):
+            compact_grid_position(0, columns=0)
+
+    def test_policy_display_name_removes_repeated_policy_suffix(self) -> None:
+        self.assertEqual(
+            policy_display_name("CLIENTLESS_SESSION_PROTECTION_POLICY"),
+            "Clientless Session Protection",
+        )
+
     def test_disclaimer_text_is_visible_and_explicit(self) -> None:
         self.assertIn("Not affiliated", DISCLAIMER_TEXT)
         self.assertIn("Zscaler", DISCLAIMER_TEXT)
@@ -48,11 +140,53 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
         self.assertEqual(build_encryption_args(True), ["--encrypt-backups"])
         self.assertEqual(build_encryption_args(False), [])
 
+    def test_restore_selection_args_support_objects_resources_and_explicit_options(self) -> None:
+        self.assertEqual(
+            build_restore_selection_args(
+                "policy_rules/ACCESS_POLICY:accesspolicy13, servers/servera",
+                ["server_groups"],
+                include_dependencies=True,
+                restore_policy_order=True,
+            ),
+            [
+                "--select",
+                "policy_rules/ACCESS_POLICY:accesspolicy13",
+                "--select",
+                "servers/servera",
+                "--select-resource",
+                "server_groups",
+                "--include-dependencies",
+                "--restore-policy-order",
+            ],
+        )
+
+    def test_restore_selection_options_require_a_scope(self) -> None:
+        with self.assertRaises(ValueError):
+            build_restore_selection_args(
+                "",
+                [],
+                include_dependencies=True,
+                restore_policy_order=False,
+            )
+
+    def test_restore_selector_parser_accepts_commas_and_lines(self) -> None:
+        self.assertEqual(
+            parse_restore_selectors("servers/a,\nserver_groups/b"),
+            ["servers/a", "server_groups/b"],
+        )
+
+    def test_resource_display_name_is_operator_friendly(self) -> None:
+        self.assertEqual(
+            resource_display_name("application_segments"),
+            "Application Segments",
+        )
+
     def test_extract_artifacts_from_cli_output(self) -> None:
         self.assertEqual(extract_artifact("audit log: logs/run.log"), ("audit_log", "logs/run.log"))
         self.assertEqual(extract_artifact("source backup: backups/run-source.json"), ("source_backup", "backups/run-source.json"))
         self.assertEqual(extract_artifact("report written: backups/run.html"), ("report", "backups/run.html"))
         self.assertEqual(extract_artifact("restore result: backups/result.json"), ("apply_result", "backups/result.json"))
+        self.assertEqual(extract_artifact("simulation: backups/simulation.json"), ("simulation", "backups/simulation.json"))
 
     def test_status_from_backup_line(self) -> None:
         self.assertEqual(status_from_line("backup target: policy rules"), "Backing up target: policy rules")
@@ -76,6 +210,14 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
         self.assertEqual(
             status_from_line("restore summary: ok=1 dry-run=0 skipped=0 errors=0"),
             "restore summary: ok=1 dry-run=0 skipped=0 errors=0",
+        )
+        self.assertEqual(
+            status_from_line("simulation summary: planned=1 skipped=2 blocked=0 deferred=1 unresolved=0"),
+            "simulation summary: planned=1 skipped=2 blocked=0 deferred=1 unresolved=0",
+        )
+        self.assertEqual(
+            status_from_line("restore scope: 1 selected object(s)"),
+            "restore scope: 1 selected object(s)",
         )
 
     def test_parse_env_lines_handles_quoted_secret_without_printing_it(self) -> None:

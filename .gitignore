@@ -3,8 +3,11 @@
 !.env.example
 backups/
 logs/
+state/
 __pycache__/
 *.pyc
+build/
+*.egg-info/
 dist/
 .DS_Store
 OneAPI_postman_collection_*.json

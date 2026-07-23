@@ -1,97 +1,155 @@
 # ZPA API Coverage Audit
 
-Audit date: 2026-06-02
-Last documentation review: 2026-06-09
+Audit date: 2026-07-23
 
-ZPA-Backup and Restore is an independent tool. It is not affiliated with, endorsed by, sponsored by, certified by, or supported by Zscaler, Inc. It is provided "as is", without warranty of any kind. See [DISCLAIMER.md](DISCLAIMER.md).
+ZPA-Backup and Restore is an independent tool. It is not affiliated with,
+endorsed by, sponsored by, certified by, or supported by Zscaler, Inc. It is
+provided "as is", without warranty of any kind. See
+[DISCLAIMER.md](DISCLAIMER.md).
 
-Source used: Zscaler Automation Hub sitemap for ZPA API reference routes:
-https://automate.zscaler.com/sitemap.xml
+Primary sources: the current
+[Zscaler Automation Hub sitemap](https://automate.zscaler.com/sitemap.xml) and
+[ZPA API reference](https://automate.zscaler.com/docs/api-reference-and-guides/api-reference/zpa).
 
-The Automation Hub route set currently exposes 189 ZPA API reference pages across 36 sections. This project is not yet compliant with every documented ZPA function. It implements a focused cloner subset with guarded write behavior and read-only inventory for selected dependencies.
+The current sitemap exposes **208 ZPA API reference pages in 44 sections**. The
+tool currently declares **136 explicit API operations across 30 modeled
+domains**. Those numbers are not a coverage percentage: several SDK-verified
+operations do not have an individual sitemap page, and some reference pages
+describe aliases or specialized variants of the same endpoint.
 
-## Implemented Clone Coverage
+Every modeled operation now has its own module under
+`zpa_backup_restore/resources/operations/`. Coverage records whether an
+operation is:
 
-| Resource | Mode | Notes |
-|---|---:|---|
-| microtenants | write gated | Requires `--allow-high-impact` for real writes |
-| inspection_custom_controls | write | Custom controls only, not predefined controls |
-| inspection_profiles | write | Depends on custom controls |
-| cbi_banners | read | Inventory only |
-| cbi_profiles | write | Cloud Browser Isolation profiles |
-| app_connector_groups | write | Groups only, not live connector instances |
-| service_edge_groups | write | Groups only, not live service-edge instances |
-| segment_groups | write | Full generic CRUD path |
-| servers | write | Full generic CRUD path |
-| server_groups | write | Depends on servers and app connector groups |
-| application_segments | write | Depends on segment/server/service-edge groups and profile resources |
-| lss_configs | write | Receiver reachability must be validated manually |
-| pra_portals | write | Privileged Remote Access portals |
-| pra_consoles | write | Privileged Remote Access consoles |
-| machine_groups | read | Inventory only |
-| posture_profiles | read | Inventory/reference only |
-| trusted_networks | read | Inventory/reference only |
-| policy_rules | write | Policy rule CRUD/reorder family partially covered; defaults to all supported policy rule types |
-| idps | read | Identity reference mapping |
-| scim_attributes | read | Identity reference mapping |
-| scim_groups | read | Identity reference mapping |
+- `enabled`: used by backup and/or guarded restore;
+- `catalog-only`: documented and auditable, but deliberately unavailable to
+  generic restore;
+- `excluded`: known operation whose output or semantics do not belong in a
+  configuration snapshot.
 
-## Official ZPA Sections
+Run `python3 -m zpa_backup_restore coverage` for the live catalog. For JSON that
+can be passed directly to another process, disable the run-ledger banner:
 
-| Official section | Route count | Current status |
-|---|---:|---|
-| appprotection-control-management | 17 | Partial: custom controls covered |
-| policy-management | 12 | Partial: policy set/rule CRUD covered, helper lists not fully covered |
-| log-streaming-service-lss-configuration | 10 | Partial: LSS configs covered, lookup/reference endpoints not all covered |
-| appprotection-profile-management | 9 | Partial: inspection profiles covered, special associate/dissociate actions not covered |
-| private-service-edge-management | 8 | Not cloned: live instances intentionally excluded |
-| isolation-profile-management | 8 | Partial: CBI profile path covered |
-| delegated-tenant-administration | 8 | Partial: microtenants covered, scope/session APIs not covered |
-| application-segment-management | 8 | Partial: application segment CRUD covered, move/share/special app-type APIs not covered |
-| privileged-console-management | 7 | Partial: PRA console CRUD covered, bulk/special portal list endpoint not fully covered |
-| certificate-management | 7 | Not cloned: certificate/private key handling is sensitive/manual |
-| app-connector-management | 7 | Not cloned: live connector instances intentionally excluded |
-| segment-group-management | 6 | Covered for generic CRUD |
-| privileged-credential-management | 6 | Not cloned: credentials/secrets excluded |
-| privileged-approval-management | 6 | Not covered |
-| emergency-access-management | 6 | Not covered |
-| server-management | 5 | Covered for generic CRUD |
-| server-group-management | 5 | Covered for generic CRUD |
-| provisioning-key-management | 5 | Not cloned: provisioning keys/secrets excluded |
-| privileged-portal-management | 5 | Partial: PRA portal CRUD covered |
-| private-service-edge-group-management | 5 | Covered as service_edge_groups |
-| isolation-certificate-management | 5 | Not cloned: certificate/private key handling is sensitive/manual |
-| isolation-banner-management | 5 | Read-only inventory only |
-| app-connector-group-management | 5 | Covered for generic CRUD |
-| scim-attributes | 3 | Read-only reference mapping |
-| saml-attributes | 3 | Not covered |
-| trusted-networks | 2 | Read-only inventory/reference only |
-| scim-groups | 2 | Read-only reference mapping |
-| posture-profiles | 2 | Read-only inventory/reference only |
-| machine-groups | 2 | Read-only inventory only |
-| idp-management | 2 | Read-only reference mapping |
-| enrollment-certificates | 2 | Not covered |
-| cloud-connector-groups | 2 | Not covered |
-| zscaler-private-access-api | 1 | Informational/root page |
-| zscaler-clouds | 1 | Not covered |
-| version-profiles | 1 | Not covered |
-| customers | 1 | Not covered |
+```sh
+python3 -m zpa_backup_restore --no-run-ledger coverage --json
+```
 
-## Compliance Position
+The HTTP audit-log path is written to standard error; the JSON records are
+written to standard output.
 
-The current project should be described as:
+The sitemap count was produced by selecting URLs beneath the exact
+`/docs/api-reference-and-guides/api-reference/zpa/` prefix, counting pages, and
+grouping the first path component as a section. The implementation count comes
+from the runtime operation registry, not a manual spreadsheet. Re-run both
+checks when the official sitemap or operation catalog changes.
 
-> A ZPA migration/cloning tool with partial API coverage, focused on application access posture and common dependency objects.
+## Enabled Clone Coverage
 
-It should not be described as:
+| Domain | Enabled behavior | Important safeguards |
+|---|---|---|
+| Microtenants | CRUD | All writes require `--allow-high-impact` |
+| AppProtection custom controls | CRUD | Predefined controls are not cloned |
+| AppProtection profiles | CRUD | Ordered after custom controls |
+| CBI banners and profiles | CRUD | CBI banner create uses its singular endpoint |
+| App Connector groups | CRUD | Live connector instances excluded |
+| Private Service Edge groups | CRUD | Live edge instances excluded |
+| Segment groups | CRUD | Name-based cross-tenant identity |
+| Application Servers | CRUD | IDs remapped in dependent payloads |
+| Server groups | CRUD | Ordered after servers and connector groups |
+| Application Segments | CRUD plus move/share | Move/share are separate high-impact operations |
+| LSS configurations | CRUD | Receiver reachability remains an operator check |
+| PRA portals and consoles | CRUD | Credentials remain excluded |
+| Policy rules | CRUD plus bulk reorder | Includes `PRIVILEGED_PORTAL_POLICY`; order restored after changes |
 
-> Fully compliant with every ZPA API function documented by Zscaler Automation Hub.
+Application Segment move/share planning resolves the destination Microtenant,
+Segment Group, Server Group, and Application Segment IDs. New child-Microtenant
+applications use a deferred post-create move. Ambiguous, unsupported, or
+unresolved operations block simulation; both move and share require
+`--allow-high-impact`.
 
-## Next Coverage Targets
+## Reference Inventory And Mapping
 
-Reasonable next targets:
+| Domain | Coverage |
+|---|---|
+| Identity Providers | list/detail catalog; list used for backup |
+| SAML attributes | global list, IdP-scoped list, and detail catalog; IdP-scoped backup/mapping |
+| SCIM attributes and values | list/detail/value catalog; scoped backup/mapping |
+| SCIM groups | list/detail catalog; scoped backup/mapping |
+| Machine groups | list/detail inventory and mapping |
+| Posture profiles | list/detail inventory and mapping |
+| Trusted networks | list/detail inventory and mapping |
+| Cloud Connector groups | list/detail inventory and mapping |
+| Version profiles | list inventory and mapping |
+| Zscaler clouds | list inventory; string responses normalized into stable records |
+| Enrollment certificates | metadata inventory only; certificate/key fields stripped recursively |
+| Browser Access groups | list inventory and mapping |
 
-1. Add read-only reference mapping for SAML attributes, version profiles, zscaler clouds, enrollment certificates, and cloud connector groups.
-2. Add special operations for application segment move/share and policy rule reorder.
-3. Add admin/report-only inventory for emergency access and privileged approvals.
-4. Keep certificates, provisioning keys, privileged credentials, live connectors, and live service edges out of generic cloning unless explicit secret-handling workflows are designed.
+## Audit-Only And Catalog-Only Coverage
+
+| Domain | Read inventory | Mutations |
+|---|---|---|
+| Business Continuity settings | Sanitized list/detail | Create/update/delete cataloged but disabled |
+| Private Cloud sites | List/detail | CRUD cataloged but disabled pending two-phase association restore |
+| Private Cloud Controller groups | List/detail | CRUD cataloged but disabled pending site association restore |
+| Live Private Cloud Controllers | List/detail | Update/delete cataloged but disabled |
+| Emergency Access users | Cursor-paginated list/detail | Add/update/activate/deactivate cataloged but disabled |
+| Privileged Approvals | List/detail | Add/update/delete/expired cleanup cataloged but disabled |
+
+Business Continuity snapshots remove IdP/SP certificate, metadata, and private-key
+fields. Generic restore cannot reconstruct those settings safely, so write
+operations remain visible but non-executable.
+
+## Explicit Exclusions
+
+The following remain outside generic cloning even when an API exists:
+
+- live App Connector and Private Service Edge instances;
+- provisioning keys and nonces;
+- privileged credentials and credential moves;
+- certificates, certificate bodies, CSRs, and private keys;
+- Business Continuity certificate/metadata downloads;
+- operational activation, restart, approval-window, and cleanup actions.
+
+## Known Unsupported Or Partial Official Sections
+
+The enabled and reference tables above describe modeled portable
+configuration. The following official sitemap sections are intentionally
+excluded, catalog-only, audit-only, or only partially represented. “Partial”
+means the useful portable operation is modeled; it does not mean every
+documentation page in that section maps to an executable operation.
+
+| Official sitemap section(s) | Status | Reason |
+|---|---|---|
+| `app-connector-management` | Excluded | Live connector instances and cleanup schedules are deployment operations, not portable configuration. |
+| `private-service-edge-management` | Excluded | Live service-edge instances are runtime deployments; only service-edge group configuration is cloned. |
+| `certificate-management`, `isolation-certificate-management`, `signing-certificate` | Excluded | Certificate bodies, signing material, CSRs, and private keys are sensitive lifecycle data. Enrollment certificates are retained only as stripped metadata. |
+| `nonce` | Excluded | Nonces are short-lived bootstrap secrets and cannot be meaningfully restored. |
+| `privileged-credential-management` | Excluded | Privileged credentials and credential moves contain or control secrets. PRA portal/console configuration remains separately modeled. |
+| `customers`, `delegated-tenant-administration` | Excluded | Customer and delegated-administration lifecycle calls cross the tenant-administration boundary and are too broad for generic configuration restore. |
+| `business-continuity-settings` | Catalog-only writes | Sanitized reads are backed up; certificate, metadata, and private-key fields are removed, so generic restore cannot reconstruct the source safely. |
+| `site`, `private-cloud-controller-group` | Catalog-only writes | Reads are backed up, but restore requires a deterministic, lab-tested two-phase create/association workflow. |
+| `private-cloud-controller` | Audit-only | Controller health and deployment state are operational inventory, not desired portable configuration. |
+| `emergency-access-management`, `privileged-approval-management` | Audit-only | Activation, approval windows, and expiry semantics are live security operations rather than ordinary configuration. |
+| `application-segment-management`, `appprotection-control-management`, `appprotection-profile-management`, `policy-management`, `siem-config` | Partial by reference page | Core portable CRUD/special operations are modeled. Helper lists, predefined/system objects, aliases, and specialized views are not automatically treated as independent restore actions. |
+
+Provisioning-key operations are also excluded even when they are exposed by an
+SDK or a route not represented as an individual page in the current sitemap.
+The same rule applies to any newly documented endpoint that returns or mutates
+credentials, private keys, bootstrap tokens, or equivalent secrets.
+
+## Current Gaps
+
+The main remaining engineering gap is safe restore—not discovery—for Business
+Continuity, Private Cloud/Site, and Controller Group configuration. Their
+secret and association requirements need explicit injection contracts plus a
+tested two-phase create/update workflow before writes can be enabled.
+
+The coverage audit is deliberately endpoint-aware rather than percentage-based.
+New helper, lookup, bulk, or specialized pages must be reviewed individually:
+add an operation module and tests when the behavior adds value, or document an
+explicit catalog-only/excluded classification when it does not belong in a
+portable snapshot.
+
+This project should be described as a guarded ZPA backup, restore, inventory, and
+audit tool with explicit partial API coverage. It should not be described as
+fully implementing every ZPA API call.

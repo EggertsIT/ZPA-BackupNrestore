@@ -1,0 +1,11 @@
+include .env.example
+include AGENTS.md
+include CHANGELOG.md
+include CONTRIBUTING.md
+include DISCLAIMER.md
+include PROGRESS.md
+include README.md
+include SPEC.md
+include TASKS.md
+include ZPA_API_COVERAGE_AUDIT.md
+recursive-include docs *.md

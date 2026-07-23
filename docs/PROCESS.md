@@ -16,11 +16,13 @@ flowchart LR
     CLI --> RestorePlan[Restore Plan]
     CLI --> Validate[Validate]
     CLI --> Preflight[Preflight]
-    CLI --> DryRun[Dry Run]
+    CLI --> Simulation[Offline Simulation]
     CLI --> Restore[Restore]
     CLI --> Report[HTML Report]
     CLI --> Coverage[Coverage]
     CLI --> Encryption[Optional backup encryption]
+    CLI --> SnapshotCatalog[Snapshot / Inventory]
+    CLI --> RunAudit[Run Audit]
 
     SingleRule[zpa_policy_tool.py<br/>single rule edit] --> DirectPolicyWrite[Direct policy rule update]
 
@@ -30,8 +32,11 @@ flowchart LR
     Compare --> CompareReport[(diff HTML)]
     RestorePlan --> RestoreDiff[(restore diff JSON)]
     RestorePlan --> RestoreReport[(restore plan HTML)]
-    DryRun --> DryRunResult[(dry-run result JSON/HTML)]
+    Simulation --> SimulationResult[(simulation JSON/HTML)]
     Restore --> RestoreResult[(restore result JSON/HTML)]
+    SnapshotCatalog --> Catalog[(state/catalog.sqlite3)]
+    RunAudit --> Ledger[(hash-chained run ledger)]
+    Restore --> RestoreChecks[(pre/post snapshots<br/>journal + residual report)]
     Encryption --> OpenSSL[OpenSSL-compatible<br/>external decryption]
 ```
 
@@ -54,6 +59,18 @@ In the normal source-to-destination workflow, Source is only read. The only way 
 
 ## Main UI Workflow
 
+The fixed left pane uses six focused tabs: `Workflow` for ordered actions,
+`Tenants` for source/destination credentials, `Options` for backup policy scope
+and safeguards, `Scope` for selective restore, `Artifacts` for generated or
+selected files, and `Status` for environment readiness. Each tab fits at the
+minimum supported window size without vertical scrolling. Command output
+scrolls independently in the right-side Activity panel.
+
+Hover over a tab, action, field, artifact, or safeguard to see a short
+explanation. The same explanations appear when a supported control receives
+keyboard focus. Tooltips clarify behavior and safety impact; every core action
+remains available through a visible, self-contained label.
+
 ```mermaid
 flowchart TD
     Start[Open desktop UI] --> Credentials[Enter Source and Destination credentials]
@@ -72,17 +89,21 @@ flowchart TD
     Compare --> ReportFile[(HTML report)]
 
     SourceFile --> Choose[Choose Desired Backup]
-    Choose --> RestorePlan[Build Restore Plan]
+    Choose --> RestoreScope{Complete or selective<br/>restore scope?}
+    RestoreScope --> RestorePlan[Build Restore Plan]
     RestorePlan --> CurrentDestination[(fresh destination backup<br/>or .json.enc)]
     RestorePlan --> RestoreDiff[(restore diff JSON)]
     RestorePlan --> RestoreReport[(restore plan HTML)]
 
     RestoreDiff --> Validate[Validate]
     Validate --> Preflight[Preflight]
-    Preflight --> DryRun[Dry Run]
-    DryRun --> Review[Review activity log and HTML report]
-    Review --> Restore[Restore]
-    Restore --> RestoreResult[(restore result JSON/HTML)]
+    Preflight --> Simulation[Simulate]
+    Simulation --> Review[Review ordered requests,<br/>payloads, skips, and blockers]
+    Review --> Assured[Select reviewed simulation]
+    Assured --> Restore[Restore]
+    Restore --> FreshCheck[Fresh destination snapshot<br/>and drift gate]
+    FreshCheck --> RestoreResult[(journal + restore result)]
+    RestoreResult --> VerifyResult[(post snapshot + residual report)]
 ```
 
 When backup encryption is enabled, source and destination backup files use `.json.enc` instead of `.json`. The passphrase is entered in the masked Backup Security field or supplied through the configured environment variable.
@@ -166,12 +187,18 @@ sequenceDiagram
     Tool->>Files: Validate backup manifests, checksums, and diff structure
     Operator->>Tool: Preflight
     Tool->>Tool: Check dependency order, missing references, backup errors, customer mismatch
-    Operator->>Tool: Dry Run
-    Tool->>Tool: Simulate create/update/delete order without API writes
+    Operator->>Tool: Simulate
+    Tool->>Tool: Build ordered methods, paths, sanitized payloads, and reference diagnostics
+    Tool->>Files: Write assured simulation JSON and HTML
     Operator->>Tool: Restore
+    Tool->>Tool: Verify simulation input, safeguard, and plan hashes
+    Tool->>Dest: GET fresh pre-restore destination state
+    Tool->>Tool: Block if destination state or exact plan changed
+    Tool->>Files: Start atomic per-operation execution journal
     Tool->>Dest: POST/PUT/DELETE in dependency order
     Dest-->>Tool: Write results
-    Tool->>Files: Write restore result and restore report
+    Tool->>Dest: GET post-restore destination state
+    Tool->>Files: Write restore result, residual diff, and verification report
 ```
 
 Restore from a past snapshot does not require live Source tenant access. It uses the chosen backup file as the desired state and writes only to the configured Destination tenant.
@@ -198,16 +225,20 @@ flowchart TD
     AllowFailed -- yes --> Dependency
     Errors -- no --> Dependency{Dependency order valid?}
     Dependency -- no --> BlockPreflight
-    Dependency -- yes --> References{Required references resolvable?}
-    References -- no --> BlockPreflight
-    References -- yes --> DryRun[Dry Run allowed]
-
-    DryRun --> Restore{Operator confirms Restore?}
+    Dependency -- yes --> Simulation[Offline Simulation]
+    Simulation --> References{Required references resolvable?}
+    References -- no --> BlockSimulation[Simulation artifact records blockers]
+    References -- yes --> Reviewed{Matching reviewed simulation supplied?}
+    Reviewed -- no --> BlockRestore[Restore blocks by default]
+    Reviewed -- yes --> Restore{Operator confirms Restore?}
     Restore -- no --> Stop[No tenant changes]
-    Restore -- yes --> Apply[Write to Destination]
+    Restore -- yes --> Fresh[Capture fresh destination and recheck plan]
+    Fresh --> Drift{Destination drift?}
+    Drift -- yes --> BlockDrift[Block before writes]
+    Drift -- no --> Apply[Write to Destination]
 ```
 
-Validate decrypts encrypted backups before checking file integrity and structure. Preflight checks whether the restore set is safe and internally consistent before write operations are allowed.
+Validate decrypts encrypted backups before checking file integrity and structure. Preflight checks whether the restore set is internally consistent. The offline simulation then verifies request ordering, payload preparation, cross-tenant ID mapping, and safety skips before write operations are allowed.
 
 ## Restore Write Order
 
@@ -250,6 +281,30 @@ flowchart LR
 
 The policy checkboxes affect policy rule types only. They do not exclude application segments, server groups, segment groups, or other modeled non-policy resources.
 
+Backup policy scope and restore selection are separate. The Scope tab or
+`--select`/`--select-resource` filters which differences may become restore
+operations. A selective diff persists canonical stable identities and is
+recomputed by preflight. Dependencies remain validation-only unless
+`--include-dependencies` is selected, and policy bulk reorder remains excluded
+unless `--restore-policy-order` is selected.
+
+```mermaid
+flowchart TD
+    Desired[(Desired backup)] --> Select{Restore scope}
+    Select --> Complete[Complete backup scope]
+    Select --> Objects[One or more stable object selectors]
+    Select --> Domain[Whole writable resource type]
+    Objects --> Dependencies{Include writable dependencies?}
+    Domain --> Dependencies
+    Dependencies -- no --> ValidateOnly[Validate mappings only]
+    Dependencies -- yes --> Expand[Recursively add referenced writable objects]
+    ValidateOnly --> ScopedDiff[Persist scoped diff]
+    Expand --> ScopedDiff
+    ScopedDiff --> Simulation[Scoped simulation and assurance]
+    Simulation --> Writes[Selected writes only]
+    Writes --> Residual[Scoped residual verification]
+```
+
 ## Safeguards
 
 ```mermaid
@@ -284,7 +339,7 @@ flowchart TD
     RestoreTarget --> RestoreDiff[(timestamp-restore-diff.json)]
     DesiredBackup --> RestoreDiff
     RestoreDiff --> RestorePlanReport[(timestamp-restore-diff.html)]
-    RestoreDiff --> DryRunResult[(timestamp-restore-result.json/html dry-run)]
+    RestoreDiff --> SimulationResult[(timestamp-simulation.json/html)]
     RestoreDiff --> RestoreResult[(timestamp-restore-result.json/html)]
 ```
 
@@ -313,10 +368,11 @@ The single-rule tool is separate from backup/restore. It writes only when `--app
 | Backup Destination | `Backup Destination` | `zpa_cloner.py backup target` | None |
 | Compare tenants | `Compare Source to Destination` | `zpa_cloner.py plan` | None |
 | Restore from snapshot | `Build Restore Plan` | `zpa_cloner.py restore-plan` | None |
+| Restore selected objects | `Scope` + `Build Restore Plan` | `zpa_cloner.py restore-plan --select <selector>` | None while planning; Destination only after reviewed restore |
 | Validate files | `Validate` | `zpa_cloner.py validate` | None |
 | Preflight restore | `Preflight` | `zpa_cloner.py preflight` | None |
-| Simulate restore | `Dry Run` | `zpa_cloner.py restore --dry-run` | None |
-| Apply restore | `Restore` | `zpa_cloner.py restore --yes` | Destination only |
+| Simulate restore | `Simulate` | `python3 -m zpa_backup_restore simulate` | None; credentials not required |
+| Apply restore | `Restore` | `zpa_cloner.py restore --simulation <reviewed.json> --yes` | Destination only |
 | Generate report | `Report` | `zpa_cloner.py report` | None |
 | Show coverage | `Coverage` | `zpa_cloner.py coverage` | None |
 | Edit one rule | Not part of main UI | `zpa_policy_tool.py add-scim-criteria --apply` | Configured single tenant |
