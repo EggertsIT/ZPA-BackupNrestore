@@ -213,3 +213,23 @@ and review independently.
 - [x] Print canonical selectors and copyable restore-plan commands from inventory.
 - [x] Add CLI, scope, dependency, assurance, and regression tests.
 - [x] Document the selective restore workflow, safety boundaries, and limitations.
+
+## 15. Disaster Recovery Runbook
+
+- [x] Define a versioned, tamper-evident DR runbook and checklist schema.
+- [x] Inventory every captured object, modeled domain, backup failure, and known
+  external recovery gap.
+- [x] Generate exact selective restore-plan commands only for safely supported
+  resources and explicit manual procedures for all other modes.
+- [x] Add readiness, change-control, destination, post-restore, business
+  validation, ledger, and evidence-archive checklist phases.
+- [x] Add credential-free generate, status, check, report, and verify CLI
+  commands with run-ledger artifact recording.
+- [x] Generate printable HTML with status summaries, ordered procedures,
+  per-setting checkboxes, commands, evidence, and integrity metadata.
+- [x] Add a compact desktop action plus runbook JSON/HTML artifact capture and
+  direct report opening.
+- [x] Add schema, coverage, command, audit-chain, tamper, CLI, report, and UI
+  tests.
+- [x] Document DR operation, audit limitations, security, and recovery coverage
+  boundaries.

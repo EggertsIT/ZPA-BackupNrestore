@@ -27,6 +27,13 @@ separately.
   tenant fields, artifacts, selective scope, and restore safeguards. Tooltips
   work with pointer hover and keyboard focus without changing the compact
   non-scrolling layout.
+- Added a credential-free disaster-recovery runbook with canonical JSON and
+  printable HTML, every captured setting, all modeled domains, known external
+  gaps, exact safe restore-plan commands, manual procedures, and end-to-end
+  recovery verification steps.
+- Added evidence-required checklist updates, deterministic plan/state hashes,
+  a hash-chained checklist audit trail, run-ledger integration, integrity
+  verification, and compact desktop generation/open controls.
 
 ## 2.0.0 - 2026-07-23
 

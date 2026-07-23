@@ -58,6 +58,7 @@ ACTION_TOOLTIPS = {
     "Audit Summary": "Summarize commands recorded in the tamper-evident local run ledger.",
     "Verify Ledger": "Verify the run ledger hash chain and report missing, modified, or reordered events.",
     "Report": "Generate an HTML report from the currently selected artifacts.",
+    "DR Runbook": "Generate an auditable setting-by-setting disaster-recovery JSON runbook and printable HTML checklist from the Desired backup.",
     "Coverage": "Show modeled ZPA API resources, operations, safety roles, and known exclusions.",
 }
 
@@ -88,6 +89,8 @@ ARTIFACT_TOOLTIPS = {
     "Reviewed simulation": "The reviewed simulation JSON required by default before live restore.",
     "Restore result": "The execution result and journal summary produced by a live restore.",
     "Audit log": "The detailed, sanitized HTTP audit log. Treat it as sensitive operational data.",
+    "DR runbook": "The canonical JSON recovery checklist with setting inventory, status, evidence, event chain, and integrity hashes.",
+    "DR checklist": "The printable HTML recovery guide generated from the canonical DR runbook.",
 }
 
 
@@ -253,6 +256,8 @@ ARTIFACT_LABELS = {
     "restore result": "apply_result",
     "apply result": "apply_result",
     "simulation": "simulation",
+    "dr runbook": "dr_runbook",
+    "dr checklist": "dr_report",
 }
 
 
@@ -317,6 +322,19 @@ def build_policy_args(text: str) -> list[str]:
 
 def build_encryption_args(encrypt_backups: bool) -> list[str]:
     return ["--encrypt-backups"] if encrypt_backups else []
+
+
+def build_dr_runbook_args(source_backup: str, *, encrypt_backups: bool) -> list[str]:
+    source_backup = source_backup.strip()
+    if not source_backup:
+        raise ValueError("Select the desired backup snapshot first.")
+    return [
+        *build_encryption_args(encrypt_backups),
+        "dr",
+        "generate",
+        "--source-backup",
+        source_backup,
+    ]
 
 
 def parse_restore_selectors(text: str) -> list[str]:
@@ -482,6 +500,8 @@ class ZPAClonerApp:
         self.simulation_var = tk.StringVar()
         self.apply_result_var = tk.StringVar()
         self.audit_log_var = tk.StringVar()
+        self.dr_runbook_var = tk.StringVar()
+        self.dr_report_var = tk.StringVar()
         self.status_var = tk.StringVar(value="Idle")
         self.detail_var = tk.StringVar(value="Ready")
         self.strict_manifest_var = tk.BooleanVar(value=True)
@@ -731,6 +751,8 @@ class ZPAClonerApp:
         self._path_row(frame, "Reviewed simulation", self.simulation_var, "json")
         self._path_row(frame, "Restore result", self.apply_result_var, "json")
         self._path_row(frame, "Audit log", self.audit_log_var, "log")
+        self._path_row(frame, "DR runbook", self.dr_runbook_var, "json")
+        self._path_row(frame, "DR checklist", self.dr_report_var, "html")
 
     def _build_safeguard_panel(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Restore Safeguards", padding=8)
@@ -883,6 +905,7 @@ class ZPAClonerApp:
         utility_row = ttk.Frame(utilities, style="Panel.TFrame")
         utility_row.pack(fill="x")
         self._action_button(utility_row, "Report", self.run_report).pack(side="left", fill="x", expand=True)
+        self._action_button(utility_row, "DR Runbook", self.run_dr_runbook).pack(side="left", fill="x", expand=True, padx=(6, 0))
         self._action_button(utility_row, "Coverage", self.run_coverage).pack(side="left", fill="x", expand=True, padx=(6, 0))
 
     def _build_activity_panel(self, parent: ttk.Frame) -> None:
@@ -909,6 +932,16 @@ class ZPAClonerApp:
         self._add_tooltip(
             open_report,
             "Open the currently selected HTML report in the system default browser.",
+        )
+        open_dr_report = ttk.Button(
+            top,
+            text="Open DR Checklist",
+            command=self.open_dr_report,
+        )
+        open_dr_report.pack(side="right", padx=(0, 8))
+        self._add_tooltip(
+            open_dr_report,
+            "Open the generated printable disaster-recovery checklist in the system default browser.",
         )
 
         self.progress = ttk.Progressbar(frame, mode="indeterminate")
@@ -1324,6 +1357,17 @@ class ZPAClonerApp:
         args.extend(["--out", report_path])
         self._run_command("Report", args)
 
+    def run_dr_runbook(self) -> None:
+        try:
+            args = build_dr_runbook_args(
+                self.source_backup_var.get(),
+                encrypt_backups=self.encrypt_backups_var.get(),
+            )
+        except ValueError as error:
+            self._show_error(str(error))
+            return
+        self._run_command("DR Runbook", args)
+
     def run_coverage(self) -> None:
         self._run_command("Coverage", ["coverage"])
 
@@ -1480,6 +1524,13 @@ class ZPAClonerApp:
             return
         self._open_existing_path(audit_log, "Audit log")
 
+    def open_dr_report(self) -> None:
+        report = self.dr_report_var.get().strip()
+        if not report:
+            self._show_error("No disaster-recovery checklist is selected.")
+            return
+        self._open_existing_path(report, "Disaster-recovery checklist")
+
     def _open_existing_path(self, value: str, label: str) -> None:
         path = Path(value)
         if not path.is_absolute():
@@ -1501,6 +1552,8 @@ class ZPAClonerApp:
             "simulation": self.simulation_var,
             "apply_result": self.apply_result_var,
             "audit_log": self.audit_log_var,
+            "dr_runbook": self.dr_runbook_var,
+            "dr_report": self.dr_report_var,
         }.get(key)
         if target is not None:
             target.set(str(path))

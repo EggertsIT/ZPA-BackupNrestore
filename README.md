@@ -244,6 +244,74 @@ and do not make a successful targeted recovery appear to fail. Do not edit a
 scoped diff by hand; preflight recomputes it from the desired backup, reviewed
 target, and persisted scope.
 
+### Disaster Recovery Runbook
+
+Generate a credential-free, setting-by-setting recovery runbook from a retained
+backup:
+
+```sh
+python3 -m zpa_backup_restore dr generate \
+  --source-backup backups/<desired-snapshot>.json
+```
+
+Encrypted `.json.enc` backups use the same masked passphrase/environment and
+OpenSSL options as the other offline commands. The command writes:
+
+- `backups/<timestamp>-dr-runbook.json`: canonical checklist state,
+  procedures, evidence references, audit trail, and integrity hashes;
+- `backups/<timestamp>-dr-runbook.html`: printable operator checklist.
+
+The runbook includes every captured object, a sign-off item for every modeled
+API domain, exact selective `restore-plan` commands only for safely writable
+resources, and explicit procedures for references, protected manual recovery,
+audit-only state, and known external exclusions. Readiness, change control,
+Destination verification, residual-diff review, business validation, ledger
+verification, evidence retention, and closure steps surround the setting
+checklist.
+
+Known gaps such as certificates/private keys, provisioning keys, live
+connector/service-edge instances, privileged credentials, and tenant
+administration are deliberately listed. This makes omissions visible; it does
+not claim complete coverage of future or unmodeled ZPA APIs.
+
+Inspect status and record one evidence-backed decision:
+
+```sh
+python3 -m zpa_backup_restore dr status \
+  --runbook backups/<timestamp>-dr-runbook.json
+
+python3 -m zpa_backup_restore dr check \
+  --runbook backups/<timestamp>-dr-runbook.json \
+  --item setting.servers.<id> \
+  --status completed \
+  --actor "operator name" \
+  --evidence "INC-2042 / restore-result.json"
+```
+
+`completed` and `not-applicable` require a non-secret evidence reference.
+Moving an item to `pending` or `blocked` requires a note. Each change records
+the operator, timestamp, prior/new status, evidence, note, and a hash-chained
+event, then regenerates the HTML checklist.
+
+Verify the source artifact, immutable plan, mutable checklist state, event
+chain, and summary:
+
+```sh
+python3 -m zpa_backup_restore dr verify \
+  --runbook backups/<timestamp>-dr-runbook.json
+```
+
+Use `--allow-missing-source` with `dr status`, `dr report`, or `dr verify` only
+when auditing a portable runbook whose original backup path is intentionally
+unavailable. Internal hashes are still verified. Runbooks are tamper-evident,
+not tamper-proof; archive their hashes and corresponding run-ledger events in a
+separately controlled system for stronger evidence.
+
+In the desktop UI, select the desired backup in `Artifacts`, click
+`DR Runbook`, and use `Open DR Checklist`. Checklist status updates remain
+explicit CLI operations so actor and evidence fields are never silently
+inferred.
+
 Limit policy rule types only when you intentionally want a narrower rule backup:
 
 ```sh

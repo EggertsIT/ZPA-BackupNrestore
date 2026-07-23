@@ -25,6 +25,7 @@ zpa_backup_restore/
 │   ├── inventory.py        # search, history, references, and drift
 │   ├── audits.py           # run audit queries
 │   ├── assurance.py        # reviewed-plan hashes and destination drift gate
+│   ├── disaster_recovery.py # setting runbooks and checklist audit state
 │   └── execution_journal.py # atomic per-operation restore state
 ├── api/                    # stable transport and audit boundary
 ├── core/
@@ -46,7 +47,8 @@ zpa_backup_restore/
 ├── storage/
 │   └── backups.py          # JSON and OpenSSL-compatible encryption
 └── reporting/
-    └── html_report.py      # redacted HTML output
+    ├── html_report.py      # redacted workflow HTML output
+    └── disaster_recovery.py # printable DR checklist output
 ```
 
 The top-level `zpa_cloner.py`, `zpa_resources.py`, `zpa_integrity.py`, and `zpa_report.py` files are compatibility façades. New implementation work belongs in the package.
@@ -168,6 +170,48 @@ Dependency inclusion is explicit because silently widening a restore would
 violate operator intent. Read-only dependencies are mapping inputs, never write
 targets. Policy order is also explicit because its bulk endpoint affects an
 entire policy type even when only one rule was selected.
+
+## Disaster Recovery Runbook Boundary
+
+The DR service is a pure, credential-free application service over an existing
+backup artifact and the resource/operation catalog. It does not call the ZPA
+API and cannot execute restore operations:
+
+```text
+backup + coverage catalog
+          ↓
+safe metadata inventory + reference edges
+          ↓
+immutable recovery plan + per-setting checklist
+          ↓
+JSON state ← hash-chained checklist events → printable HTML
+          ↓
+run ledger records command + input/output artifact hashes
+```
+
+The service enumerates captured objects through the same stable identities and
+safe metadata extraction used by inventory. Payloads and secret values are not
+copied into the runbook. It combines those objects with every modeled domain,
+endpoint failures, and a maintained list of intentional recovery exclusions.
+
+Capability classification is fail-closed:
+
+- writable, selectable clone resources receive an exact selective
+  `restore-plan` command;
+- read-only mapping resources receive reference verification steps;
+- Business Continuity and private-cloud configuration receive protected manual
+  procedures;
+- runtime controllers, Emergency Access users, and Privileged Approvals receive
+  audit-only validation;
+- duplicates, unknown resources, missing domains, and exclusions receive
+  external recovery steps and no automated command.
+
+The plan projection excludes mutable checklist fields and has its own SHA-256.
+Checklist status is deterministically reconstructed from the event chain and
+compared with the persisted state and state hash. This exposes accidental plan
+edits, state edits, event modification/removal/reordering, and stale summaries.
+The run ledger provides a separate record of each updated artifact hash. These
+mechanisms are tamper-evident rather than cryptographically signed.
 
 ## Restore Assurance Boundary
 

@@ -23,6 +23,7 @@ flowchart LR
     CLI --> Encryption[Optional backup encryption]
     CLI --> SnapshotCatalog[Snapshot / Inventory]
     CLI --> RunAudit[Run Audit]
+    CLI --> DR[Disaster Recovery Runbook]
 
     SingleRule[zpa_policy_tool.py<br/>single rule edit] --> DirectPolicyWrite[Direct policy rule update]
 
@@ -36,6 +37,8 @@ flowchart LR
     Restore --> RestoreResult[(restore result JSON/HTML)]
     SnapshotCatalog --> Catalog[(state/catalog.sqlite3)]
     RunAudit --> Ledger[(hash-chained run ledger)]
+    DR --> DRJson[(auditable DR runbook JSON)]
+    DR --> DRHtml[(printable setting checklist HTML)]
     Restore --> RestoreChecks[(pre/post snapshots<br/>journal + residual report)]
     Encryption --> OpenSSL[OpenSSL-compatible<br/>external decryption]
 ```
@@ -70,6 +73,11 @@ Hover over a tab, action, field, artifact, or safeguard to see a short
 explanation. The same explanations appear when a supported control receives
 keyboard focus. Tooltips clarify behavior and safety impact; every core action
 remains available through a visible, self-contained label.
+
+After selecting a Desired backup, `DR Runbook` creates the canonical JSON and
+printable HTML checklist without tenant credentials. `Open DR Checklist` opens
+the generated guide. The Workflow tab keeps the DR action in its existing
+Review row, so the left panel remains non-scrolling.
 
 ```mermaid
 flowchart TD
@@ -345,6 +353,37 @@ flowchart TD
 
 Every significant operation writes local artifacts so an operator can review what happened and rerun validation/reporting from files.
 
+## Disaster Recovery Checklist Flow
+
+```mermaid
+flowchart TD
+    Backup[(Desired backup JSON or JSON.enc)] --> Generate[DR generate<br/>offline and credential-free]
+    Coverage[30 modeled domains<br/>136 explicit operations] --> Generate
+    Exclusions[Known external recovery areas] --> Generate
+    Generate --> JSON[(Canonical runbook JSON)]
+    Generate --> HTML[(Printable HTML checklist)]
+
+    JSON --> Status[DR status]
+    Status --> Execute[Perform one documented recovery step]
+    Execute --> Evidence[Collect non-secret evidence]
+    Evidence --> Check[DR check<br/>actor + status + evidence]
+    Check --> Chain[Append hash-chained checklist event]
+    Chain --> JSON
+    Chain --> HTML
+
+    JSON --> Verify[DR verify]
+    Verify --> SourceHash{Source artifact hash valid?}
+    SourceHash --> PlanHash{Plan, state, chain,<br/>summary hashes valid?}
+    PlanHash --> Complete{Every required item<br/>addressed?}
+    Complete --> Archive[Archive recovery evidence set]
+```
+
+The checklist contains readiness and change-control gates, every modeled
+domain, every captured setting, known exclusions, post-restore technical and
+business validation, audit-ledger verification, evidence retention, and final
+acceptance. Automated commands are emitted only for stable writable resources;
+all other modes have explicit manual or verification procedures.
+
 ## Single Rule Edit
 
 ```mermaid
@@ -374,5 +413,6 @@ The single-rule tool is separate from backup/restore. It writes only when `--app
 | Simulate restore | `Simulate` | `python3 -m zpa_backup_restore simulate` | None; credentials not required |
 | Apply restore | `Restore` | `zpa_cloner.py restore --simulation <reviewed.json> --yes` | Destination only |
 | Generate report | `Report` | `zpa_cloner.py report` | None |
+| Generate DR runbook | `DR Runbook` | `python3 -m zpa_backup_restore dr generate --source-backup <backup>` | None; credentials not required |
 | Show coverage | `Coverage` | `zpa_cloner.py coverage` | None |
 | Edit one rule | Not part of main UI | `zpa_policy_tool.py add-scim-criteria --apply` | Configured single tenant |

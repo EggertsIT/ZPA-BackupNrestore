@@ -274,6 +274,42 @@ Use the closest available checks for each change:
   unrelated tenant differences do not turn a successful targeted recovery into
   a false failure.
 
+## Disaster Recovery Runbook Requirements
+
+- Operators must be able to generate a credential-free disaster-recovery
+  runbook from an existing plain or encrypted backup artifact.
+- The runbook must have a canonical JSON artifact for automation and audit plus
+  a printable HTML report for human execution.
+- The runbook must enumerate every resource object captured in the selected
+  backup, every modeled API domain including empty or failed domains, and every
+  explicitly known recovery exclusion. It must not describe current coverage as
+  complete ZPA platform coverage when unmodeled or excluded settings remain.
+- Each captured object must have a stable checklist ID, display name, resource
+  type, stable identity, restore capability, safety classification,
+  dependencies, ordered instructions, and either an exact selective
+  `restore-plan` command or an explicit manual/reference-only procedure.
+- Clone-capable resources may use the guarded selective-restore workflow.
+  Reference, audit-only, catalog-only, secret-bearing, ambiguous, and excluded
+  resources must never receive a misleading automated restore command.
+- Global readiness, change-control, destination verification, residual-diff,
+  business validation, ledger verification, and evidence-archive steps must be
+  included around the per-setting checklist.
+- Checklist changes must record timestamp, operator, previous and new status,
+  evidence reference, and note. Completion and not-applicable decisions require
+  evidence.
+- The immutable plan, mutable checklist state, and checklist event chain must
+  use deterministic SHA-256 hashes so accidental modification, removal, or
+  reordering is detectable. This is tamper-evident, not tamper-proof.
+- Runbook generation, status, checklist updates, HTML regeneration, and
+  verification must be available without tenant credentials. These commands
+  must also participate in the existing run audit ledger.
+- The desktop UI must expose runbook generation from the selected desired
+  backup, capture both runbook artifacts, and provide a direct way to open the
+  HTML checklist without adding vertical scrolling.
+- Runbooks contain tenant configuration names, artifact paths, operator names,
+  and evidence references. They must be treated as sensitive operational
+  records and written with restrictive permissions where supported.
+
 ## Assumptions
 
 - No dedicated lint tool is currently configured; `compileall` is the project lint substitute for now.

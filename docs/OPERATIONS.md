@@ -97,6 +97,101 @@ fresh-target drift checks, execution, and residual verification all reuse that
 same scope. Unrelated Destination changes do not block or fail a targeted
 restore, while drift affecting a selected object still blocks before writes.
 
+## Disaster Recovery Runbook
+
+The disaster-recovery runbook turns one retained backup into a complete
+operator work package for the application’s known recovery scope:
+
+```sh
+python3 -m zpa_backup_restore dr generate \
+  --source-backup backups/<desired>.json \
+  --out backups/<incident>-dr-runbook.json \
+  --report-out backups/<incident>-dr-runbook.html
+```
+
+Generation is offline and credential-free. It accepts plain or encrypted
+backups, validates the strict manifest, hashes the source artifact, and writes
+owner-readable JSON and HTML files. An invalid or incomplete backup still
+produces a runbook so the gaps can be managed, but readiness and affected
+domain/items are marked `blocked`.
+
+### Recovery paths
+
+Every captured object receives exactly one recovery path:
+
+| Capability | Meaning |
+| --- | --- |
+| `automated` | A stable selector and exact guarded `restore-plan` command are available. |
+| `reference` | The target object must already exist or be recreated through its authoritative process; simulation validates mapping. |
+| `protected-manual` | Sanitized metadata exists, but secret or two-phase association requirements prohibit generic restore. |
+| `audit-only` | The record is operational state to validate or recreate through its supported operational process. |
+| `external` | The area is unmodeled, ambiguous, missing, or intentionally excluded and requires separately governed recovery. |
+
+The report includes a sign-off for every modeled domain, even when the backup
+contains zero objects or an optional endpoint was unavailable. Known external
+items cover certificates/private keys, provisioning keys, live App Connector
+and Private Service Edge instances, privileged credentials, and
+tenant-administration/lifecycle configuration. Future or unmodeled APIs can
+still exist, so this is a coverage-aware runbook—not a claim of complete ZPA
+platform recovery.
+
+### Checklist operation
+
+Show all items or filter by status:
+
+```sh
+python3 -m zpa_backup_restore dr status \
+  --runbook backups/<incident>-dr-runbook.json
+
+python3 -m zpa_backup_restore dr status \
+  --runbook backups/<incident>-dr-runbook.json \
+  --status blocked --status pending
+```
+
+Use the stable item ID printed in the table/report to record a decision:
+
+```sh
+python3 -m zpa_backup_restore dr check \
+  --runbook backups/<incident>-dr-runbook.json \
+  --item setting.application_segments.<id> \
+  --status completed \
+  --actor "recovery operator" \
+  --evidence "INC-2042 / residual-report.html"
+```
+
+Allowed states are `pending`, `completed`, `blocked`, and `not-applicable`.
+Completion and not-applicable decisions require evidence. Pending and blocked
+decisions require a note. Evidence must be a non-secret ticket, artifact path,
+report hash, screenshot reference, or test reference; never paste credentials,
+tokens, private keys, certificates, or secret values into the runbook.
+
+Each update is atomic, rewrites the printable HTML, and appends a checklist
+event with sequence, timestamp, operator, previous/new state, evidence, note,
+previous hash, and event hash. The normal run ledger separately records the
+command and input/output artifact hashes.
+
+Regenerate or verify artifacts:
+
+```sh
+python3 -m zpa_backup_restore dr report \
+  --runbook backups/<incident>-dr-runbook.json \
+  --out backups/<incident>-dr-runbook.html
+
+python3 -m zpa_backup_restore dr verify \
+  --runbook backups/<incident>-dr-runbook.json
+```
+
+Verification checks the original source file hash by default, the immutable
+plan hash, derived checklist state, event-chain sequence/hashes, audit head,
+event count, and summary. `--allow-missing-source` verifies a portable runbook
+when its original absolute backup path is intentionally unavailable.
+
+The hashes make accidental edits, event removal, reordering, and inconsistent
+status changes evident. They are not signatures. An attacker who can replace
+the entire runbook and related ledger can manufacture new hashes, so export
+runbook/ledger hashes to a separately controlled evidence system when
+non-repudiation is required.
+
 ## Auditing
 
 Every normal CLI command receives a UUID run ID. The run ledger records application version, command, safeguard selections, result, input/output artifact hashes, and the final detailed HTTP audit-log hash. Sensitive field names and credential-like error text are redacted before persistence.

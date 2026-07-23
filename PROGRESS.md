@@ -4,6 +4,48 @@ This file records completed work, verification, skipped checks, and known risks.
 
 ## 2026-07-23
 
+### Disaster Recovery Runbook
+
+- Added a credential-free DR service that builds a versioned canonical JSON
+  runbook and printable HTML checklist from plain or encrypted backups.
+- Enumerated every captured setting, all 30 modeled domains and 136 explicit
+  operations, endpoint failures, optional/missing domains, and six known
+  external recovery areas.
+- Classified every item as guarded automated restore, Destination reference,
+  protected manual recovery, operational audit validation, or external
+  recovery. Automated commands are generated only for stable writable objects.
+- Added readiness, infrastructure, change-control, per-domain, per-setting,
+  external recovery, residual-diff, reference/order, business-service,
+  ledger/evidence, and closure procedures.
+- Added evidence-required `dr check` updates with actor, timestamp, prior/new
+  status, notes, atomic persistence, deterministic plan/state hashes, and a
+  hash-chained checklist event trail.
+- Added credential-free `dr generate`, `status`, `check`, `report`, and
+  `verify` commands with run-ledger input/output artifact hashes.
+- Added a compact `DR Runbook` desktop action, JSON/HTML artifact capture,
+  contextual guidance, and direct `Open DR Checklist` access.
+- The UI/UX Utility Clean direction keeps the action in the existing Review
+  row and adds no Workflow-tab height.
+
+### Disaster Recovery Runbook Checks
+
+- Passed: `python3 -m compileall -q zpa_backup_restore *.py`.
+- Passed: `python3 -m unittest discover -q` with 100 tests.
+- Passed focused runbook coverage, incomplete-backup, evidence, hash-chain,
+  tamper-detection, printable-report, CLI, encrypted-backup, and UI tests.
+- Passed CLI help checks for `dr generate`, `status`, `check`, `report`, and
+  `verify`.
+- Rechecked all six tabs at the 1040×700 minimum window. The notebook had
+  593 px available; requested heights were Workflow 546, Tenants 350, Options
+  460, Scope 521, Artifacts 436, and Status 258, with no overflow.
+- Rebuilt `dist/ZPA-Backup and Restore.app` and verified that the current DR
+  service and reporting modules are included.
+- Passed `plutil -lint` for the generated `Info.plist`.
+- Passed `sh -n` for the generated macOS launcher.
+- Passed: `git diff --check`.
+- Type checking remains skipped because no static type checker is configured.
+- No live tenant calls were made.
+
 ### Contextual UI Tooltips
 
 - Added a reusable delayed tooltip component that supports pointer hover and

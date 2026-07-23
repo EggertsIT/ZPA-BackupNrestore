@@ -13,6 +13,7 @@ from zpa_cloner_app import (
     TAB_TOOLTIPS,
     auth_mode_for_profile,
     build_encryption_args,
+    build_dr_runbook_args,
     build_policy_args,
     build_restore_selection_args,
     compact_grid_position,
@@ -54,6 +55,7 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
             "Audit Summary",
             "Verify Ledger",
             "Report",
+            "DR Runbook",
             "Coverage",
         }
         expected_safeguards = {
@@ -71,6 +73,8 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
             "Reviewed simulation",
             "Restore result",
             "Audit log",
+            "DR runbook",
+            "DR checklist",
         }
 
         self.assertEqual(set(TAB_TOOLTIPS), set(LEFT_PANEL_TABS))
@@ -140,6 +144,23 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
         self.assertEqual(build_encryption_args(True), ["--encrypt-backups"])
         self.assertEqual(build_encryption_args(False), [])
 
+    def test_build_dr_runbook_args_uses_selected_backup_and_encryption_context(self) -> None:
+        self.assertEqual(
+            build_dr_runbook_args(
+                "backups/recovery.json.enc",
+                encrypt_backups=True,
+            ),
+            [
+                "--encrypt-backups",
+                "dr",
+                "generate",
+                "--source-backup",
+                "backups/recovery.json.enc",
+            ],
+        )
+        with self.assertRaises(ValueError):
+            build_dr_runbook_args("", encrypt_backups=False)
+
     def test_restore_selection_args_support_objects_resources_and_explicit_options(self) -> None:
         self.assertEqual(
             build_restore_selection_args(
@@ -187,6 +208,8 @@ class ZpaClonerAppHelperTests(unittest.TestCase):
         self.assertEqual(extract_artifact("report written: backups/run.html"), ("report", "backups/run.html"))
         self.assertEqual(extract_artifact("restore result: backups/result.json"), ("apply_result", "backups/result.json"))
         self.assertEqual(extract_artifact("simulation: backups/simulation.json"), ("simulation", "backups/simulation.json"))
+        self.assertEqual(extract_artifact("dr runbook: backups/dr.json"), ("dr_runbook", "backups/dr.json"))
+        self.assertEqual(extract_artifact("dr checklist: backups/dr.html"), ("dr_report", "backups/dr.html"))
 
     def test_status_from_backup_line(self) -> None:
         self.assertEqual(status_from_line("backup target: policy rules"), "Backing up target: policy rules")

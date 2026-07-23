@@ -31,6 +31,7 @@ from zpa_backup_restore.core.diff import SPECIAL_DIFF_RESOURCES, diff_action_tot
 from zpa_backup_restore.core.integrity import (
     diff_has_changes,
     preflight_restore,
+    sha256_text,
     validate_backup,
     validate_diff,
 )
@@ -42,6 +43,9 @@ from zpa_backup_restore.core.selection import (
     scope_from_diff,
 )
 from zpa_backup_restore.errors import CliError
+from zpa_backup_restore.reporting.disaster_recovery import (
+    write_disaster_recovery_report,
+)
 from zpa_backup_restore.reporting.html_report import write_report
 from zpa_backup_restore.repositories import (
     DEFAULT_CATALOG_PATH,
@@ -54,7 +58,13 @@ from zpa_backup_restore.services import (
     FileExecutionJournal,
     InventoryService,
     SnapshotService,
+    build_disaster_recovery_runbook,
+    load_disaster_recovery_runbook,
+    save_disaster_recovery_runbook,
+    update_disaster_recovery_checklist,
+    verify_disaster_recovery_runbook,
 )
+from zpa_backup_restore.services.disaster_recovery import DR_CHECKLIST_STATUSES
 from zpa_backup_restore.services.assurance import (
     build_assured_simulation,
     fresh_destination_diff,
@@ -118,7 +128,12 @@ def configure_audit(args: argparse.Namespace) -> None:
 
 
 def _command_name(args: argparse.Namespace) -> str:
-    for attribute in ("snapshot_command", "inventory_command", "audit_command"):
+    for attribute in (
+        "snapshot_command",
+        "inventory_command",
+        "audit_command",
+        "dr_command",
+    ):
         child = getattr(args, attribute, None)
         if child:
             return f"{args.command}.{child}"
@@ -180,7 +195,14 @@ def record_run_event(args: argparse.Namespace, event_type: str, data: dict[str, 
 
 
 def record_declared_inputs(args: argparse.Namespace) -> None:
-    for attribute in ("source_backup", "target_backup", "diff", "apply_result", "simulation"):
+    for attribute in (
+        "source_backup",
+        "target_backup",
+        "diff",
+        "apply_result",
+        "simulation",
+        "runbook",
+    ):
         value = getattr(args, attribute, None)
         if value:
             record_run_artifact(args, f"input.{attribute.replace('_', '-')}", value)
@@ -302,6 +324,7 @@ def _emit_structured(
     *,
     output_format: str,
     out: str | None = None,
+    output_label: str = "inventory export",
 ) -> bool:
     """Emit JSON/CSV to stdout or a file; return False for caller-owned table output."""
     if output_format == "table" and not out:
@@ -312,7 +335,7 @@ def _emit_structured(
         path = Path(out)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
-        print(f"inventory export: {path}")
+        print(f"{output_label}: {path}")
     else:
         print(text, end="" if text.endswith("\n") else "\n")
     return True
@@ -882,6 +905,227 @@ def command_report(args: argparse.Namespace) -> None:
     )
     record_run_artifact(args, "output.report", args.out)
     print(f"report written: {args.out}")
+
+
+def _default_dr_runbook_path() -> Path:
+    return BACKUPS_DIR / f"{now_stamp()}-dr-runbook.json"
+
+
+def _default_dr_report_path(runbook_path: Path) -> Path:
+    return runbook_path.with_suffix(".html")
+
+
+def _dr_command_prefix(
+    args: argparse.Namespace,
+    source_backup: str | Path,
+) -> list[str | Path]:
+    return [
+        "python3",
+        "-m",
+        "zpa_backup_restore",
+        *_backup_crypto_replay_args(args, source_backup),
+    ]
+
+
+def _print_dr_summary(runbook: dict[str, Any]) -> None:
+    summary = runbook.get("summary", {}) or {}
+    print(
+        "dr summary: "
+        f"settings={summary.get('settingItems', 0)} "
+        f"completed={summary.get('completed', 0)} "
+        f"pending={summary.get('pending', 0)} "
+        f"blocked={summary.get('blocked', 0)} "
+        f"not-applicable={summary.get('notApplicable', 0)} "
+        f"addressed={summary.get('completionPercent', 0)}%"
+    )
+
+
+def command_dr_generate(args: argparse.Namespace) -> None:
+    source_path = Path(args.source_backup)
+    backup = load_json_for_args(source_path, args)
+    runbook_path = Path(args.out) if args.out else _default_dr_runbook_path()
+    report_path = (
+        Path(args.report_out)
+        if args.report_out
+        else _default_dr_report_path(runbook_path)
+    )
+    runbook = build_disaster_recovery_runbook(
+        backup,
+        source_path,
+        command_prefix=_dr_command_prefix(args, source_path),
+        title=args.title,
+    )
+    save_disaster_recovery_runbook(runbook_path, runbook)
+    write_disaster_recovery_report(
+        report_path,
+        runbook,
+        runbook_path=runbook_path.resolve(),
+    )
+    record_run_artifact(args, "output.dr-runbook", runbook_path)
+    record_run_artifact(args, "output.dr-checklist", report_path)
+    record_run_event(
+        args,
+        "dr.runbook.generated",
+        {
+            "planSha256": runbook["integrity"]["planSha256"],
+            "itemCount": runbook["summary"]["total"],
+            "settingCount": runbook["summary"]["settingItems"],
+            "blockedCount": runbook["summary"]["blocked"],
+        },
+    )
+    _print_dr_summary(runbook)
+    print(f"dr runbook: {runbook_path}")
+    print(f"dr checklist: {report_path}")
+
+
+def _verified_dr_runbook(
+    args: argparse.Namespace,
+) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    path = Path(args.runbook)
+    runbook = load_disaster_recovery_runbook(path)
+    verification = verify_disaster_recovery_runbook(
+        runbook,
+        check_source=not getattr(args, "allow_missing_source", False),
+    )
+    if not verification["valid"]:
+        raise CliError(
+            "DR runbook verification failed:\n"
+            + "\n".join(f"- {error}" for error in verification["errors"])
+        )
+    return path, runbook, verification
+
+
+def command_dr_status(args: argparse.Namespace) -> None:
+    _path, runbook, verification = _verified_dr_runbook(args)
+    selected_statuses = set(args.status or DR_CHECKLIST_STATUSES)
+    items = [
+        item
+        for item in runbook.get("items", []) or []
+        if item.get("status") in selected_statuses
+    ]
+    rows = [
+        {
+            "sequence": item.get("sequence"),
+            "id": item.get("id"),
+            "status": item.get("status"),
+            "phase": item.get("phase"),
+            "capability": item.get("capability"),
+            "resource_type": item.get("resourceType"),
+            "name": item.get("name"),
+            "operator": item.get("operator"),
+            "evidence": item.get("evidence"),
+        }
+        for item in items
+    ]
+    if args.format in {"json", "csv"} or args.out:
+        if args.format == "csv":
+            _emit_structured(
+                rows,
+                output_format="csv",
+                out=args.out,
+                output_label="dr status",
+            )
+        else:
+            payload = {
+                "verification": verification,
+                "summary": runbook.get("summary", {}),
+                "items": rows,
+            }
+            text = dump_json(payload) + "\n"
+            if args.out:
+                path = Path(args.out)
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(text, encoding="utf-8")
+                record_run_artifact(args, "output.dr-status", path)
+                print(f"dr status: {path}")
+            else:
+                print(text, end="")
+        return
+    _print_dr_summary(runbook)
+    print(" #    Status          Capability        Resource type             Name / checklist item")
+    print("----  --------------  ----------------  ------------------------  ----------------------------------------")
+    for row in rows:
+        print(
+            f"{str(row['sequence']).rjust(4)}  "
+            f"{str(row['status'])[:14].ljust(14)}  "
+            f"{str(row['capability'])[:16].ljust(16)}  "
+            f"{str(row['resource_type'])[:24].ljust(24)}  "
+            f"{str(row['name'])[:40]}"
+        )
+    if not rows:
+        print("(no checklist items matched)")
+
+
+def command_dr_check(args: argparse.Namespace) -> None:
+    runbook_path = Path(args.runbook)
+    runbook = load_disaster_recovery_runbook(runbook_path)
+    item = update_disaster_recovery_checklist(
+        runbook,
+        item_identifier=args.item,
+        status=args.status,
+        operator=args.actor,
+        evidence=args.evidence,
+        note=args.note,
+    )
+    save_disaster_recovery_runbook(runbook_path, runbook)
+    report_path = (
+        Path(args.report_out)
+        if args.report_out
+        else _default_dr_report_path(runbook_path)
+    )
+    write_disaster_recovery_report(
+        report_path,
+        runbook,
+        runbook_path=runbook_path.resolve(),
+    )
+    record_run_event(
+        args,
+        "dr.checklist.updated",
+        {
+            "itemId": item["id"],
+            "fromStatus": runbook["auditTrail"][-1]["fromStatus"],
+            "toStatus": item["status"],
+            "actor": item["operator"],
+            "evidenceSha256": sha256_text(item["evidence"])
+            if item["evidence"]
+            else "",
+            "planSha256": runbook["integrity"]["planSha256"],
+            "stateSha256": runbook["integrity"]["stateSha256"],
+        },
+    )
+    record_run_artifact(args, "output.dr-runbook", runbook_path)
+    record_run_artifact(args, "output.dr-checklist", report_path)
+    print(
+        f"dr checklist updated: {item['id']} "
+        f"{runbook['auditTrail'][-1]['fromStatus']} -> {item['status']}"
+    )
+    _print_dr_summary(runbook)
+    print(f"dr runbook: {runbook_path}")
+    print(f"dr checklist: {report_path}")
+
+
+def command_dr_report(args: argparse.Namespace) -> None:
+    runbook_path, runbook, _verification = _verified_dr_runbook(args)
+    report_path = Path(args.out)
+    write_disaster_recovery_report(
+        report_path,
+        runbook,
+        runbook_path=runbook_path.resolve(),
+    )
+    record_run_artifact(args, "output.dr-checklist", report_path)
+    print(f"dr checklist: {report_path}")
+
+
+def command_dr_verify(args: argparse.Namespace) -> None:
+    path = Path(args.runbook)
+    runbook = load_disaster_recovery_runbook(path)
+    verification = verify_disaster_recovery_runbook(
+        runbook,
+        check_source=not args.allow_missing_source,
+    )
+    print(dump_json(verification))
+    if not verification["valid"]:
+        raise CliError("DR runbook verification failed")
 
 
 def command_coverage(args: argparse.Namespace) -> None:
@@ -1464,6 +1708,95 @@ def build_parser() -> argparse.ArgumentParser:
     preflight.add_argument("--diff", required=True)
     preflight.add_argument("--allow-failed-backups", action="store_true")
     preflight.set_defaults(func=command_preflight)
+
+    dr = sub.add_parser(
+        "dr",
+        help="Generate and audit a setting-by-setting disaster-recovery runbook.",
+    )
+    dr_sub = dr.add_subparsers(dest="dr_command", required=True)
+
+    dr_generate = dr_sub.add_parser(
+        "generate",
+        help="Build credential-free JSON and HTML recovery checklists from a backup.",
+    )
+    dr_generate.add_argument("--source-backup", required=True)
+    dr_generate.add_argument(
+        "--out",
+        help="Runbook JSON path. Default: backups/<timestamp>-dr-runbook.json.",
+    )
+    dr_generate.add_argument(
+        "--report-out",
+        help="Printable HTML checklist path. Default: next to the JSON runbook.",
+    )
+    dr_generate.add_argument(
+        "--title",
+        default=f"{APP_DISPLAY_NAME} Disaster Recovery Runbook",
+    )
+    dr_generate.set_defaults(func=command_dr_generate)
+
+    dr_status = dr_sub.add_parser(
+        "status",
+        help="Show checklist completion, blockers, capabilities, and evidence.",
+    )
+    dr_status.add_argument("--runbook", required=True)
+    dr_status.add_argument(
+        "--status",
+        action="append",
+        choices=DR_CHECKLIST_STATUSES,
+        help="Filter by checklist status; repeat as needed.",
+    )
+    dr_status.add_argument(
+        "--allow-missing-source",
+        action="store_true",
+        help="Verify the portable runbook without requiring its original backup path.",
+    )
+    _add_output_arguments(dr_status)
+    dr_status.set_defaults(func=command_dr_status)
+
+    dr_check = dr_sub.add_parser(
+        "check",
+        help="Record one auditable checklist status change and regenerate HTML.",
+    )
+    dr_check.add_argument("--runbook", required=True)
+    dr_check.add_argument("--item", required=True, help="Checklist item ID or unique prefix.")
+    dr_check.add_argument("--status", required=True, choices=DR_CHECKLIST_STATUSES)
+    dr_check.add_argument("--actor", required=True, help="Operator recording the decision.")
+    dr_check.add_argument(
+        "--evidence",
+        default="",
+        help="Non-secret ticket, artifact, report, or test reference.",
+    )
+    dr_check.add_argument("--note", default="", help="Decision or blocker note; never include secrets.")
+    dr_check.add_argument(
+        "--report-out",
+        help="Updated HTML path. Default: runbook path with an .html suffix.",
+    )
+    dr_check.set_defaults(func=command_dr_check)
+
+    dr_report = dr_sub.add_parser(
+        "report",
+        help="Regenerate printable HTML from a verified runbook.",
+    )
+    dr_report.add_argument("--runbook", required=True)
+    dr_report.add_argument("--out", required=True)
+    dr_report.add_argument(
+        "--allow-missing-source",
+        action="store_true",
+        help="Verify the portable runbook without requiring its original backup path.",
+    )
+    dr_report.set_defaults(func=command_dr_report)
+
+    dr_verify = dr_sub.add_parser(
+        "verify",
+        help="Verify source, plan, checklist state, event chain, and summary hashes.",
+    )
+    dr_verify.add_argument("--runbook", required=True)
+    dr_verify.add_argument(
+        "--allow-missing-source",
+        action="store_true",
+        help="Verify the portable runbook without requiring its original backup path.",
+    )
+    dr_verify.set_defaults(func=command_dr_verify)
 
     snapshot = sub.add_parser("snapshot", help="Manage the local credential-free snapshot catalog.")
     snapshot_sub = snapshot.add_subparsers(dest="snapshot_command", required=True)
